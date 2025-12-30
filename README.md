@@ -80,9 +80,8 @@ Performance
   - `go test -bench . ./pkg/transform/impute`
 - Tune `--chunk-size` to match your workload and machine.
 
-Compatibility & Migration
--------------------------
-- See MIGRATION.md to move from legacy `dataio`/`imputation` to the new `Frame`/`Pipeline` API.
+Integrations
+------------
 - Adapters: `adapters/golearn` converts to/from golearn `DenseInstances`.
 
 Roadmap
