@@ -1,0 +1,28 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+      - name: Build janitor CLI
+        run: |
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64   go build -o dist/janitor-linux-amd64 ./cmd/janitor
+          GOOS=darwin GOARCH=amd64  go build -o dist/janitor-darwin-amd64 ./cmd/janitor
+          GOOS=darwin GOARCH=arm64  go build -o dist/janitor-darwin-arm64 ./cmd/janitor
+          GOOS=windows GOARCH=amd64 go build -o dist/janitor-windows-amd64.exe ./cmd/janitor
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: janitor-${{ github.ref_name }}
+          path: dist/*
+

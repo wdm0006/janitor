@@ -1,0 +1,12 @@
+{
+  "input": {"type": "jsonl", "path": "examples/data/sample.jsonl"},
+  "output": {"type": "jsonl", "path": "examples/data/sample_clean.jsonl"},
+  "steps": [
+    {"trim": {"column": "name"}},
+    {"lower": {"column": "name"}},
+    {"impute_mean": {"column": "val"}},
+    {"regex_replace": {"column": "name", "pattern": "char", "replace": "Char"}},
+    {"validate_range": {"column": "val", "min": 0.0, "max": 100.0}}
+  ]
+}
+

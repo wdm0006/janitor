@@ -1,0 +1,11 @@
+{
+  "input": {"path": "examples/data/iris_nulls.csv", "has_header": true},
+  "output": {"path": "examples/data/iris_cleaned.csv"},
+  "steps": [
+    {"impute_constant": {"column": "sepal_length", "value": 0}},
+    {"impute_mean": {"column": "sepal_width"}},
+    {"trim": {"column": "species"}},
+    {"validate_in": {"column": "species", "values": ["Iris-setosa", "Iris-versicolor", "Iris-virginica"]}}
+  ]
+}
+

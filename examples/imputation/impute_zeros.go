@@ -1,22 +1,27 @@
 package main
 
 import (
-	"fmt"
-	"github.com/sjwhitworth/golearn/base"
-	"github.com/sjwhitworth/golearn/evaluation"
-	"github.com/sjwhitworth/golearn/knn"
-	"github.com/wdm0006/janitor/dataio"
-	"github.com/wdm0006/janitor/imputation"
+    "fmt"
+    "github.com/sjwhitworth/golearn/base"
+    "github.com/sjwhitworth/golearn/evaluation"
+    "github.com/sjwhitworth/golearn/knn"
+    adapters "github.com/wdm0006/janitor/adapters/golearn"
+    csvio "github.com/wdm0006/janitor/pkg/io/csvio"
+    "github.com/wdm0006/janitor/imputation"
 )
 
 func main() {
-	// we use our custom parser to pull back a csv that has some missing values
-	rawData, err := dataio.ParseDirtyCSVToInstances("examples/data/iris_nulls.csv", false, 10)
-	if err != nil {
-		panic(err)
-	}
-	// printing it out we can see NaN values in float fields and some empty strings
-	fmt.Println(rawData)
+    // Load CSV via new csvio reader and convert to golearn instances for this example
+    rdr, f, err := csvio.Open("examples/data/iris_nulls.csv", csvio.ReaderOptions{HasHeader: false, SampleRows: 10})
+    if err != nil { panic(err) }
+    defer func() { _ = f.Close() }()
+    schema, _, err := rdr.InferSchema()
+    if err != nil { panic(err) }
+    fr, err := rdr.ReadAll(schema)
+    if err != nil { panic(err) }
+    rawData, err := adapters.ToDenseInstances(fr)
+    if err != nil { panic(err) }
+    fmt.Println(rawData)
 
 	// the ConstantImputer will let us specify a default float value for NaNs, shown here.
 	imputer := imputation.NewConstantImputer(0.0)
@@ -31,8 +36,8 @@ func main() {
 	cls := knn.NewKnnClassifier("euclidean", "linear", 2)
 
 	//Do a training-test split
-	trainData, testData := base.InstancesTrainTestSplit(rawData, 0.50)
-	cls.Fit(trainData)
+    trainData, testData := base.InstancesTrainTestSplit(rawData, 0.50)
+    if err := cls.Fit(trainData); err != nil { panic(err) }
 
 	//Calculates the Euclidean distance and returns the most popular label
 	predictions, err := cls.Predict(testData)

@@ -1,0 +1,4 @@
+{"version":2,"width":100,"height":30,"timestamp":1767104228,"command":"bash -lc 'echo Cleaning demo...; go run ./cmd/janitor --config examples/config/rules.json --chunk-size 1000; echo Done.'","env":{"SHELL":"/bin/zsh"}}
+[0.012051, "o", "Cleaning demo...\r\n"]
+[0.46512, "o", "Done.\r\n"]
+[0.465472, "x", "0"]

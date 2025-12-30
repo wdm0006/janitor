@@ -1,18 +1,26 @@
 package imputation
 
 import (
-	"github.com/sjwhitworth/golearn/base"
-	"github.com/sjwhitworth/golearn/ensemble"
-	"github.com/sjwhitworth/golearn/evaluation"
-	"github.com/smartystreets/goconvey/convey"
-	"github.com/wdm0006/janitor/dataio"
-	"testing"
+    "github.com/sjwhitworth/golearn/base"
+    "github.com/sjwhitworth/golearn/ensemble"
+    "github.com/sjwhitworth/golearn/evaluation"
+    "github.com/smartystreets/goconvey/convey"
+    adapters "github.com/wdm0006/janitor/adapters/golearn"
+    csvio "github.com/wdm0006/janitor/pkg/io/csvio"
+    "testing"
 )
 
 func TestConstantImputer(t *testing.T) {
-	convey.Convey("Given a valid CSV file", t, func() {
-		inst, err := dataio.ParseDirtyCSVToInstances("../examples/data/iris_nulls.csv", true, 5)
-		convey.So(err, convey.ShouldBeNil)
+    convey.Convey("Given a valid CSV file", t, func() {
+        r, f, err := csvio.Open("../examples/data/iris_nulls.csv", csvio.ReaderOptions{HasHeader: true, SampleRows: 10})
+        convey.So(err, convey.ShouldBeNil)
+        defer func() { _ = f.Close() }()
+        schema, _, err := r.InferSchema()
+        convey.So(err, convey.ShouldBeNil)
+        fr, err := r.ReadAll(schema)
+        convey.So(err, convey.ShouldBeNil)
+        inst, err := adapters.ToDenseInstances(fr)
+        convey.So(err, convey.ShouldBeNil)
 
 		convey.Convey("Try Imputing some data", func() {
 			imputer := NewConstantImputer(0.0)

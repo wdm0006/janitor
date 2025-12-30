@@ -11,16 +11,20 @@ import (
 	"strings"
 )
 
+// Deprecated: use pkg/io/csvio to read into a janitor Frame and apply
+// cleaning via the Pipeline API. This function remains for compatibility
+// with legacy golearn-based code.
+//
 // ParseDirtyCSVToInstances reads the CSV file given by filepath and returns
 // the read Instances. CSV may have missing or malformed values.
 func ParseDirtyCSVToInstances(filepath string, hasHeaders bool, n_samples int) (instances *base.DenseInstances, err error) {
 
 	// Open the file
-	f, err := os.Open(filepath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
+    f, err := os.Open(filepath)
+    if err != nil {
+        return nil, err
+    }
+    defer func() { _ = f.Close() }()
 
 	// Read the number of rows in the file
 	rowCount, err := base.ParseCSVGetRows(filepath)
@@ -42,13 +46,17 @@ func ParseDirtyCSVToInstances(filepath string, hasHeaders bool, n_samples int) (
 		spec := instances.AddAttribute(a)
 		specs[i] = spec
 	}
-	instances.Extend(rowCount)
+    if err := instances.Extend(rowCount); err != nil {
+        return nil, err
+    }
 	err = ParseCSVBuildInstancesFromReader(f, attrs, hasHeaders, instances)
 	if err != nil {
 		return nil, err
 	}
 
-	instances.AddClassAttribute(attrs[len(attrs)-1])
+    if err := instances.AddClassAttribute(attrs[len(attrs)-1]); err != nil {
+        return nil, err
+    }
 
 	return instances, nil
 }
@@ -57,17 +65,17 @@ func ParseDirtyCSVToInstances(filepath string, hasHeaders bool, n_samples int) (
 func ParseCSVBuildInstancesFromReader(r io.Reader, attrs []base.Attribute, hasHeader bool, u base.UpdatableDataGrid) (err error) {
 	var rowCounter int
 
-	defer func() {
-		if r := recover(); r != nil {
-			if _, ok := r.(runtime.Error); ok {
-				panic(err)
-			}
-			err = fmt.Errorf("Error at line %d (error %s)", rowCounter, r.(error))
-		}
-	}()
+    defer func() {
+        if r := recover(); r != nil {
+            if _, ok := r.(runtime.Error); ok {
+                panic(err)
+            }
+            err = fmt.Errorf("error at line %d (error %s)", rowCounter, r.(error))
+        }
+    }()
 
 	specs := base.ResolveAttributes(u, attrs)
-	reader := csv.NewReader(r)
+    reader := csv.NewReader(r)
 
 	for {
 		record, err := reader.Read()
@@ -83,12 +91,12 @@ func ParseCSVBuildInstancesFromReader(r io.Reader, attrs []base.Attribute, hasHe
 			}
 		}
 		for i, v := range record {
-			if strings.Compare(strings.TrimSpace(v), "") == 1 {
-				parsed_val := base.Attribute.GetSysValFromString(specs[i].GetAttribute(), strings.TrimSpace(v))
-				u.Set(specs[i], rowCounter, parsed_val)
-			} else {
-				if base.Attribute.GetType(specs[i].GetAttribute()) == 1 {
-					parsed_val := base.Attribute.GetSysValFromString(specs[i].GetAttribute(), "NaN")
+            if strings.TrimSpace(v) != "" {
+                parsed_val := base.Attribute.GetSysValFromString(specs[i].GetAttribute(), strings.TrimSpace(v))
+                u.Set(specs[i], rowCounter, parsed_val)
+            } else {
+                if base.Attribute.GetType(specs[i].GetAttribute()) == 1 {
+                    parsed_val := base.Attribute.GetSysValFromString(specs[i].GetAttribute(), "NaN")
 					u.Set(specs[i], rowCounter, parsed_val)
 				} else {
 					parsed_val := base.Attribute.GetSysValFromString(specs[i].GetAttribute(), "")
@@ -122,11 +130,11 @@ func ParseCSVGetAttributes(filepath string, hasHeaders bool, n_samples int) []ba
 func ParseCSVSniffAttributeTypes(filepath string, hasHeaders bool, n_samples int) []base.Attribute {
 	var attrs []base.Attribute
 	// Open file
-	file, err := os.Open(filepath)
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
+    file, err := os.Open(filepath)
+    if err != nil {
+        panic(err)
+    }
+    defer func() { _ = file.Close() }()
 	// Create the CSV reader
 	reader := csv.NewReader(file)
 	if hasHeaders {
@@ -156,23 +164,20 @@ func ParseCSVSniffAttributeTypes(filepath string, hasHeaders bool, n_samples int
 		panic(err)
 	}
 
-	for _, entries := range columns_list {
-		// Match the Attribute type with regular expressions
-		matched := 0
-		didnt_match := 0
-		for _, entry := range entries {
-			entry = strings.Trim(entry, " ")
-			m, err := regexp.MatchString("^[-+]?[0-9]*\\.?[0-9]+([eE][-+]?[0-9]+)?$", entry)
-			if err != nil {
-				panic(err)
-			} else {
-				if m {
-					matched++
-				} else {
-					didnt_match++
-				}
-			}
-		}
+    re := regexp.MustCompile(`^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$`)
+    for _, entries := range columns_list {
+        // Match the Attribute type with regular expressions
+        matched := 0
+        didnt_match := 0
+        for _, entry := range entries {
+            entry = strings.Trim(entry, " ")
+            m := re.MatchString(entry)
+            if m {
+                matched++
+            } else {
+                didnt_match++
+            }
+        }
 
 		if matched > didnt_match {
 			attrs = append(attrs, base.NewFloatAttribute(""))

@@ -1,78 +1,95 @@
 Janitor
 =======
 
-A golearn-compatible data preprocessing library. Very much a WIP. Very much based on golearn.
+High‑performance data cleaning for Go — as a library and a CLI.
 
-To start with we're working on loading datasets that have issues with them, and then resolving those issues in a
-reasonable way before feeding into golearn. So far that has been loading csvs with missing values for numeric  fields,
-and then imputing those missing values with a constant.  In the examples directory, there is an example of doing this
-with the iris dataset, where we impute zeros and then make predictions on that data.
+Janitor provides a streaming‑friendly pipeline API, strong typing with a columnar `Frame`, robust CSV/JSONL IO, and adapters for popular ML libraries like golearn.
 
-Getting Started
-===============
+What It Is
+----------
+- Library and CLI for cleaning messy tabular data at speed.
+- Columnar core with typed, nullable columns and vectorized ops.
+- Streaming execution to process large files in bounded memory.
+- Batteries included transforms: imputers, text normalization, validation, and outlier handling.
+- Adapters to/from golearn `DenseInstances`.
 
-We view this as a complement to golearn, so most of the interfaces are the same. To run our version of their KNN example
-either run whats in the examples directory, or something like:
+Quick Start
+-----------
+Demo
+- ![Janitor CLI demo](docs/assets/demo.gif)
+- Generate/update the GIF: see docs/demo.
 
-```go
-package main
+CLI
+- Install (once available): `go install github.com/wdm0006/janitor/cmd/janitor@latest`
+- Run (CSV): `janitor --config examples/config/rules.json`
+- Run (JSONL): `janitor --config examples/config/rules_jsonl.json`
+- Stream large files: `janitor --config <file> --chunk-size 10000`
 
-import (
-	"fmt"
-	"github.com/wdm0006/janitor/dataio"
-	"github.com/wdm0006/janitor/imputation"
-	"github.com/sjwhitworth/golearn/knn"
-	"github.com/sjwhitworth/golearn/evaluation"
-	"github.com/sjwhitworth/golearn/base"
-)
-
-func main() {
-	// we use our custom parser to pull back a csv that has some missing values
-	rawData, err := dataio.ParseDirtyCSVToInstances("examples/data/iris_nulls.csv", false, 10)
-	if err != nil {
-		panic(err)
-	}
-	// printing it out we can see NaN values in float fields and some empty strings
-	fmt.Println(rawData)
-
-	// the ConstantImputer will let us specify a default float value for NaNs, shown here.
-	imputer := imputation.NewConstantImputer(0.0)
-	clean_data := imputer.Transform(rawData)
-
-	// and there we go, kinda clean data.
-	fmt.Println(clean_data)
-
-	// Now we can proceed as we normally would with golearn:
-
-	//Initialises a new KNN classifier
-	cls := knn.NewKnnClassifier("euclidean", "linear", 2)
-
-	//Do a training-test split
-	trainData, testData := base.InstancesTrainTestSplit(rawData, 0.50)
-	cls.Fit(trainData)
-
-	//Calculates the Euclidean distance and returns the most popular label
-	predictions, err := cls.Predict(testData)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(predictions)
-
-	// Prints precision/recall metrics
-	confusionMat, err := evaluation.GetConfusionMatrix(testData, predictions)
-	if err != nil {
-		panic(fmt.Sprintf("Unable to get confusion matrix: %s", err.Error()))
-	}
-	fmt.Println(evaluation.GetSummary(confusionMat))
-
+Minimal JSON config
+```json
+{
+  "input": {"type": "csv", "path": "data.csv", "has_header": true},
+  "output": {"type": "csv", "path": "clean.csv"},
+  "steps": [
+    {"impute_mean": {"column": "age"}},
+    {"trim": {"column": "name"}},
+    {"lower": {"column": "email"}},
+    {"validate_range": {"column": "age", "min": 0}}
+  ]
 }
 ```
 
+Library (Go)
+```go
+import (
+  "context"
+  csvio "github.com/wdm0006/janitor/pkg/io/csvio"
+  j "github.com/wdm0006/janitor/pkg/janitor"
+  imp "github.com/wdm0006/janitor/pkg/transform/impute"
+  std "github.com/wdm0006/janitor/pkg/transform/standardize"
+)
+
+r, f, _ := csvio.Open("data.csv", csvio.ReaderOptions{HasHeader: true})
+defer f.Close()
+schema, _, _ := r.InferSchema()
+frame, _ := r.ReadAll(schema)
+
+p := j.NewPipeline().
+  Add(&imp.Mean{Column: "age"}).
+  Add(&std.Trim{Column: "name"})
+
+out, _ := p.Run(context.Background(), frame)
+_ = csvio.WriteAll("clean.csv", out, csvio.WriterOptions{})
 ```
-Reference Class	True Positives	False Positives	True Negatives	Precision	Recall	F1 Score
----------------	--------------	---------------	--------------	---------	------	--------
-Iris-virginica	28	           	3		        56		        0.9032		0.9655	0.9333
-Iris-versicolor	26		        1		        58		        0.9630		0.8966	0.9286
-Iris-setosa	    29		        0		        58		        1.0000		0.9667	0.9831
-Overall accuracy: 0.9432
-```
+
+Features
+--------
+- IO: CSV (headers, custom delimiter), JSONL; Parquet planned (build tag).
+- Transforms: impute (constant/mean/median/mode), trim/lower, regex replace, value maps, range checks, in‑set validation, capping.
+- Streaming: chunked readers/writers for CSV and JSONL; backpressure‑friendly pipeline entrypoint.
+- Columnar core: typed, nullable columns; minimal allocations; vector‑style loops.
+- Compatibility: adapters to/from golearn `DenseInstances`.
+
+Performance
+-----------
+- Designed for throughput:
+  - Streaming avoids loading entire files; fixed memory footprint per chunk.
+  - CSV uses `Reader.ReuseRecord` and fast parsers; JSONL uses buffered decoders.
+  - Column‑wise transforms reduce per‑cell overhead and GC pressure.
+- Benchmarks included; run with:
+  - `go test -bench . ./pkg/io/csvio`
+  - `go test -bench . ./pkg/transform/impute`
+- Tune `--chunk-size` to match your workload and machine.
+
+Compatibility & Migration
+-------------------------
+- See MIGRATION.md to move from legacy `dataio`/`imputation` to the new `Frame`/`Pipeline` API.
+- Adapters: `adapters/golearn` converts to/from golearn `DenseInstances`.
+
+Roadmap
+-------
+- See ROADMAP.md for milestones and upcoming features.
+
+Contributing
+------------
+- See CONTRIBUTING.md for development environment, style, testing, and release info.

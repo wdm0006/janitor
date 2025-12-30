@@ -1,10 +1,11 @@
 package imputation
 
 import (
-	"bytes"
-	"github.com/sjwhitworth/golearn/base"
+    "bytes"
+    "github.com/sjwhitworth/golearn/base"
 )
 
+// Deprecated: use pkg/transform/impute.Constant in a Pipeline instead.
 type ConstantImputer struct {
 	impute_val float64
 }
@@ -33,14 +34,16 @@ func (imputer *ConstantImputer) Transform(X *base.DenseInstances) *base.DenseIns
 		}
 	}
 
-	X.MapOverRows(asv, func(val [][]byte, row int) (bool, error) {
-		for col_id, v := range val {
-			if bytes.Compare(v, sys_nan) == 0 {
-				X.Set(asv[col_id], row, base.PackFloatToBytes(imputer.impute_val))
-			}
-		}
-		return true, nil
-	})
+    if err := X.MapOverRows(asv, func(val [][]byte, row int) (bool, error) {
+        for col_id, v := range val {
+            if bytes.Equal(v, sys_nan) {
+                X.Set(asv[col_id], row, base.PackFloatToBytes(imputer.impute_val))
+            }
+        }
+        return true, nil
+    }); err != nil {
+        panic(err)
+    }
 
 	return X
 }
