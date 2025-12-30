@@ -17,7 +17,6 @@ Quick Start
 -----------
 Demo
 - ![Janitor CLI demo](docs/assets/demo.gif)
-- Generate/update the GIF: see docs/demo.
 
 CLI
 - Install (once available): `go install github.com/wdm0006/janitor/cmd/janitor@latest`
