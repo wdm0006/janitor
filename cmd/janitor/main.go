@@ -36,9 +36,10 @@ type Config struct {
 }
 
 func main() {
-	showVersion := flag.Bool("version", false, "Print version and exit")
-	configPath := flag.String("config", "", "Path to cleaning config (JSON)")
-	chunkSize := flag.Int("chunk-size", 0, "Enable streaming with chunk size (rows per chunk). 0 disables streaming.")
+    showVersion := flag.Bool("version", false, "Print version and exit")
+    configPath := flag.String("config", "", "Path to cleaning config (JSON)")
+    chunkSize := flag.Int("chunk-size", 0, "Enable streaming with chunk size (rows per chunk). 0 disables streaming.")
+    verbose := flag.Bool("verbose", false, "Print progress and a summary")
 	flag.Parse()
 
 	if *showVersion {
@@ -62,7 +63,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	var frame *j.Frame
+    var frame *j.Frame
+    var stepNames []string
 	useStream := *chunkSize > 0
 	if !useStream {
 		switch cfg.Input.Type {
@@ -82,11 +84,14 @@ func main() {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
-			frame, err = rdr.ReadAll(schema)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
-			}
+            frame, err = rdr.ReadAll(schema)
+            if err != nil {
+                fmt.Fprintln(os.Stderr, err)
+                os.Exit(1)
+            }
+            if *verbose {
+                fmt.Fprintf(os.Stderr, "read csv: rows=%d cols=%d from %s\n", frame.Rows(), len(schema.Columns), cfg.Input.Path)
+            }
 		case "jsonl":
 			jr, jf, err := jsonlio.Open(cfg.Input.Path, jsonlio.ReaderOptions{SampleRows: 100})
 			if err != nil {
@@ -99,11 +104,14 @@ func main() {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
-			frame, err = jr.ReadAll(schema)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
-			}
+            frame, err = jr.ReadAll(schema)
+            if err != nil {
+                fmt.Fprintln(os.Stderr, err)
+                os.Exit(1)
+            }
+            if *verbose {
+                fmt.Fprintf(os.Stderr, "read jsonl: rows=%d cols=%d from %s\n", frame.Rows(), len(schema.Columns), cfg.Input.Path)
+            }
 		default:
 			fmt.Fprintf(os.Stderr, "unsupported input type %q\n", cfg.Input.Type)
 			os.Exit(2)
@@ -120,75 +128,85 @@ func main() {
 		}
 		for k, v := range probe {
 			switch k {
-			case "impute_constant":
-				var s struct {
-					Column string `json:"column"`
-					Value  any    `json:"value"`
-				}
-				_ = json.Unmarshal(v, &s)
-				p.Add(&imp.Constant{Column: s.Column, Value: s.Value})
+            case "impute_constant":
+                var s struct {
+                    Column string `json:"column"`
+                    Value  any    `json:"value"`
+                }
+                _ = json.Unmarshal(v, &s)
+                p.Add(&imp.Constant{Column: s.Column, Value: s.Value})
+                stepNames = append(stepNames, "impute_constant:"+s.Column)
 			case "impute_mean":
 				var s struct {
 					Column string `json:"column"`
 				}
-				_ = json.Unmarshal(v, &s)
-				p.Add(&imp.Mean{Column: s.Column})
+                _ = json.Unmarshal(v, &s)
+                p.Add(&imp.Mean{Column: s.Column})
+                stepNames = append(stepNames, "impute_mean:"+s.Column)
 			case "trim":
 				var s struct {
 					Column string `json:"column"`
 				}
-				_ = json.Unmarshal(v, &s)
-				p.Add(&std.Trim{Column: s.Column})
+                _ = json.Unmarshal(v, &s)
+                p.Add(&std.Trim{Column: s.Column})
+                stepNames = append(stepNames, "trim:"+s.Column)
 			case "lower":
 				var s struct {
 					Column string `json:"column"`
 				}
-				_ = json.Unmarshal(v, &s)
-				p.Add(&std.Lower{Column: s.Column})
+                _ = json.Unmarshal(v, &s)
+                p.Add(&std.Lower{Column: s.Column})
+                stepNames = append(stepNames, "lower:"+s.Column)
 			case "regex_replace":
 				var s struct {
 					Column  string `json:"column"`
 					Pattern string `json:"pattern"`
 					Replace string `json:"replace"`
 				}
-				_ = json.Unmarshal(v, &s)
-				p.Add(&std.RegexReplace{Column: s.Column, Pattern: s.Pattern, Replace: s.Replace})
+                _ = json.Unmarshal(v, &s)
+                p.Add(&std.RegexReplace{Column: s.Column, Pattern: s.Pattern, Replace: s.Replace})
+                stepNames = append(stepNames, "regex_replace:"+s.Column)
 			case "map_values":
 				var s struct {
 					Column string            `json:"column"`
 					Map    map[string]string `json:"map"`
 				}
-				_ = json.Unmarshal(v, &s)
-				p.Add(&std.MapValues{Column: s.Column, Map: s.Map})
+                _ = json.Unmarshal(v, &s)
+                p.Add(&std.MapValues{Column: s.Column, Map: s.Map})
+                stepNames = append(stepNames, "map_values:"+s.Column)
 			case "impute_median":
 				var s struct {
 					Column string `json:"column"`
 				}
-				_ = json.Unmarshal(v, &s)
-				p.Add(&imp.Median{Column: s.Column})
+                _ = json.Unmarshal(v, &s)
+                p.Add(&imp.Median{Column: s.Column})
+                stepNames = append(stepNames, "impute_median:"+s.Column)
 			case "validate_in":
 				var s struct {
 					Column string   `json:"column"`
 					Values []string `json:"values"`
 				}
-				_ = json.Unmarshal(v, &s)
-				p.Add(val.NewInSet(s.Column, s.Values))
+                _ = json.Unmarshal(v, &s)
+                p.Add(val.NewInSet(s.Column, s.Values))
+                stepNames = append(stepNames, "validate_in:"+s.Column)
 			case "validate_range":
 				var s struct {
 					Column string   `json:"column"`
 					Min    *float64 `json:"min"`
 					Max    *float64 `json:"max"`
 				}
-				_ = json.Unmarshal(v, &s)
-				p.Add(&val.Range{Column: s.Column, Min: s.Min, Max: s.Max})
+                _ = json.Unmarshal(v, &s)
+                p.Add(&val.Range{Column: s.Column, Min: s.Min, Max: s.Max})
+                stepNames = append(stepNames, "validate_range:"+s.Column)
 			case "cap_range":
 				var s struct {
 					Column string   `json:"column"`
 					Min    *float64 `json:"min"`
 					Max    *float64 `json:"max"`
 				}
-				_ = json.Unmarshal(v, &s)
-				p.Add(&outl.Cap{Column: s.Column, Min: s.Min, Max: s.Max})
+                _ = json.Unmarshal(v, &s)
+                p.Add(&outl.Cap{Column: s.Column, Min: s.Min, Max: s.Max})
+                stepNames = append(stepNames, "cap_range:"+s.Column)
 			default:
 				fmt.Fprintf(os.Stderr, "warning: unknown step %q ignored\n", k)
 			}
@@ -209,8 +227,8 @@ func main() {
 				os.Exit(1)
 			}
             defer func() { _ = f.Close() }()
-			switch cfg.Output.Type {
-			case "", "csv":
+    switch cfg.Output.Type {
+    case "", "csv":
 				outDelim := ','
 				if cfg.Output.Delimiter != "" {
 					outDelim = rune(cfg.Output.Delimiter[0])
@@ -293,17 +311,20 @@ func main() {
 		if cfg.Output.Delimiter != "" {
 			outDelim = rune(cfg.Output.Delimiter[0])
 		}
-		if err := csvio.WriteAll(cfg.Output.Path, outFrame, csvio.WriterOptions{Delimiter: outDelim}); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	case "jsonl":
-		if err := jsonlio.WriteAll(cfg.Output.Path, outFrame); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	default:
-		fmt.Fprintf(os.Stderr, "unsupported output type %q\n", cfg.Output.Type)
-		os.Exit(2)
-	}
+        if err := csvio.WriteAll(cfg.Output.Path, outFrame, csvio.WriterOptions{Delimiter: outDelim}); err != nil {
+            fmt.Fprintln(os.Stderr, err)
+            os.Exit(1)
+        }
+    case "jsonl":
+        if err := jsonlio.WriteAll(cfg.Output.Path, outFrame); err != nil {
+            fmt.Fprintln(os.Stderr, err)
+            os.Exit(1)
+        }
+    default:
+        fmt.Fprintf(os.Stderr, "unsupported output type %q\n", cfg.Output.Type)
+        os.Exit(2)
+    }
+    if *verbose {
+        fmt.Fprintf(os.Stderr, "batch complete: rows=%d cols=%d steps=%v -> %s\n", outFrame.Rows(), len(outFrame.Schema().Columns), stepNames, cfg.Output.Path)
+    }
 }

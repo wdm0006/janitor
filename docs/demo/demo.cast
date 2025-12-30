@@ -1,4 +1,4 @@
-{"version":2,"width":100,"height":30,"timestamp":1767104228,"command":"bash -lc 'echo Cleaning demo...; go run ./cmd/janitor --config examples/config/rules.json --chunk-size 1000; echo Done.'","env":{"SHELL":"/bin/zsh"}}
-[0.012051, "o", "Cleaning demo...\r\n"]
-[0.46512, "o", "Done.\r\n"]
-[0.465472, "x", "0"]
+{"version":2,"width":100,"height":30,"timestamp":1767105524,"command":"bash -lc 'go run ./cmd/janitor --config examples/config/rules.json --chunk-size 0 --verbose'","env":{"SHELL":"/bin/zsh"}}
+[1.320879, "o", "read csv: rows=149 cols=5 from examples/data/iris_nulls.csv\r\n"]
+[1.321498, "o", "batch complete: rows=149 cols=5 steps=[impute_constant:sepal_length impute_mean:sepal_width trim:species validate_in:species] -> examples/data/iris_cleaned.csv\r\n"]
+[1.325792, "x", "0"]
