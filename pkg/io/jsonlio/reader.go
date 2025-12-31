@@ -1,15 +1,16 @@
 package jsonlio
 
 import (
-	"bufio"
-	"encoding/json"
-	"io"
-	"os"
-	"regexp"
-	"strconv"
-	"strings"
+    "bufio"
+    "encoding/json"
+    "io"
+    "os"
+    "regexp"
+    "strconv"
+    "strings"
 
-	j "github.com/wdm0006/janitor/pkg/janitor"
+    j "github.com/wdm0006/janitor/pkg/janitor"
+    iox "github.com/wdm0006/janitor/pkg/io/ioutils"
 )
 
 type ReaderOptions struct {
@@ -24,12 +25,16 @@ type Reader struct {
 }
 
 func Open(path string, opt ReaderOptions) (*Reader, *os.File, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	rd := bufio.NewReader(f)
-	return &Reader{r: rd, opt: opt}, f, nil
+    var f *os.File
+    var err error
+    if path != "-" {
+        f, err = os.Open(path)
+        if err != nil { return nil, nil, err }
+    }
+    rc, err := iox.OpenMaybeCompressed(path)
+    if err != nil { _ = f.Close(); return nil, nil, err }
+    rd := bufio.NewReader(rc)
+    return &Reader{r: rd, opt: opt}, f, nil
 }
 
 func (r *Reader) InferSchema() (j.Schema, error) {

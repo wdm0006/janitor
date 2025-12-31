@@ -19,7 +19,7 @@ type StreamReader struct {
 
 // NewStreamReader opens the file, infers schema (respecting options), and returns a StreamReader.
 func NewStreamReader(path string, opt ReaderOptions, chunkSize int) (*StreamReader, *os.File, error) {
-	rr, f, err := Open(path, opt)
+    rr, f, err := Open(path, opt)
 	if err != nil {
 		return nil, nil, err
 	}

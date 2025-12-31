@@ -3,15 +3,15 @@ Janitor
 
 High‑performance data cleaning for Go — as a library and a CLI.
 
-Janitor provides a streaming‑friendly pipeline API, strong typing with a columnar `Frame`, robust CSV/JSONL IO, and adapters for popular ML libraries like golearn.
+Janitor provides a streaming‑friendly pipeline API, strong typing with a columnar `Frame`, and robust CSV/JSONL/Parquet IO. It also includes adapters for popular ML libraries like golearn.
 
 What It Is
 ----------
 - Library and CLI for cleaning messy tabular data at speed.
 - Columnar core with typed, nullable columns and vectorized ops.
 - Streaming execution to process large files in bounded memory.
-- Batteries included transforms: imputers, text normalization, validation, and outlier handling.
-- Adapters to/from golearn `DenseInstances`.
+- Built‑in transforms: imputers, text normalization, validation, outlier handling.
+- Integrations with golearn via adapters.
 
 Quick Start
 -----------
@@ -19,10 +19,16 @@ Demo
 - ![Janitor CLI demo](docs/assets/demo.gif)
 
 CLI
-- Install (once available): `go install github.com/wdm0006/janitor/cmd/janitor@latest`
+- Install: `go install github.com/wdm0006/janitor/cmd/janitor@latest`
 - Run (CSV): `janitor --config examples/config/rules.json`
 - Run (JSONL): `janitor --config examples/config/rules_jsonl.json`
+- Parquet: set `input.type`/`output.type` to `parquet` (input supported for dry‑run/profile/streaming; output supported for batch/streaming)
 - Stream large files: `janitor --config <file> --chunk-size 10000`
+  - Progress: add `--expected-rows N` for ETA (progress bar + rate)
+  - Multi‑file: globs in `input.path` (CSV/JSONL). For multiple files, include `{basename}` in `output.path`
+  - Partitioned outputs: add `output.partition_by` and use `{col:ColumnName}` in `output.path`
+  - CSV repair: set `input.csv_strict` true to error on short/long records; otherwise repairs are applied and summarized with `--verbose`
+  - Pipes + gzip: use `-` for stdin/stdout; `.gz` is auto‑detected on read and created on write
 
 Minimal JSON config
 ```json
@@ -63,18 +69,20 @@ _ = csvio.WriteAll("clean.csv", out, csvio.WriterOptions{})
 
 Features
 --------
-- IO: CSV (headers, custom delimiter), JSONL; Parquet planned (build tag).
-- Transforms: impute (constant/mean/median/mode), trim/lower, regex replace, value maps, range checks, in‑set validation, capping.
-- Streaming: chunked readers/writers for CSV and JSONL; backpressure‑friendly pipeline entrypoint.
-- Columnar core: typed, nullable columns; minimal allocations; vector‑style loops.
-- Compatibility: adapters to/from golearn `DenseInstances`.
+- IO: CSV (headers, delimiter sniffing, BOM/UTF‑8 repair, strict/repair modes), JSONL, Parquet (read + write)
+- Transforms: impute (constant/mean/median/mode), trim/lower, regex replace, value maps, range checks, in‑set validation, capping
+- Streaming: chunked readers/writers for CSV/JSONL/Parquet; multi‑file globs; per‑column partitioned outputs
+- Progress: rows/sec and optional ETA with `--expected-rows`
+- Columnar core: typed, nullable columns; minimal allocations; vector‑style loops
+- Integrations: adapters to/from golearn `DenseInstances`
 
 Performance
 -----------
 - Designed for throughput:
   - Streaming avoids loading entire files; fixed memory footprint per chunk.
-  - CSV uses `Reader.ReuseRecord` and fast parsers; JSONL uses buffered decoders.
+  - CSV uses `Reader.ReuseRecord` and fast parsers; JSONL uses buffered decoders; Parquet uses segmentio/parquet‑go.
   - Column‑wise transforms reduce per‑cell overhead and GC pressure.
+  - Progress shows rows/sec and optional ETA when expected row count is provided.
 - Benchmarks included; run with:
   - `go test -bench . ./pkg/io/csvio`
   - `go test -bench . ./pkg/transform/impute`
@@ -84,6 +92,11 @@ Integrations
 ------------
 - Adapters: `adapters/golearn` converts to/from golearn `DenseInstances`.
 
+Docs
+----
+- Cookbook recipes: see `docs/COOKBOOK.md` for CSV/JSONL/Parquet conversions, partitioned outputs, and streaming with ETA.
+- Demo: see `docs/demo` for how to record/update the GIF.
+
 Roadmap
 -------
 - See ROADMAP.md for milestones and upcoming features.
@@ -91,3 +104,4 @@ Roadmap
 Contributing
 ------------
 - See CONTRIBUTING.md for development environment, style, testing, and release info.
+

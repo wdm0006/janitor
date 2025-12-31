@@ -1,15 +1,15 @@
 package jsonlio
 
 import (
-	"bufio"
-	"encoding/json"
-	"os"
+    "bufio"
+    "encoding/json"
 
-	j "github.com/wdm0006/janitor/pkg/janitor"
+    j "github.com/wdm0006/janitor/pkg/janitor"
+    iox "github.com/wdm0006/janitor/pkg/io/ioutils"
 )
 
 func WriteAll(path string, f *j.Frame) error {
-    out, err := os.Create(path)
+    out, err := iox.CreateMaybeCompressed(path)
     if err != nil {
         return err
     }

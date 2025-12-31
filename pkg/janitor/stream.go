@@ -12,17 +12,17 @@ type ChunkSource interface {
 
 // ChunkSink consumes frames, typically writing them out.
 type ChunkSink interface {
-	Write(*Frame) error
-	Close() error
+    Write(*Frame) error
+    Close() error
 }
 
 // RunStream pulls chunks from src, applies the pipeline, and writes to sink.
 func RunStream(ctx context.Context, p *Pipeline, src ChunkSource, sink ChunkSink) error {
     defer func() { _ = sink.Close() }()
-	for {
-		f, err := src.Next()
-		if err == io.EOF {
-			return nil
+    for {
+        f, err := src.Next()
+        if err == io.EOF {
+            return nil
 		}
 		if err != nil {
 			return err

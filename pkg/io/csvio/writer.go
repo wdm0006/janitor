@@ -1,11 +1,11 @@
 package csvio
 
 import (
-	"encoding/csv"
-	"os"
-	"strconv"
+    "encoding/csv"
+    "strconv"
 
-	j "github.com/wdm0006/janitor/pkg/janitor"
+    j "github.com/wdm0006/janitor/pkg/janitor"
+    iox "github.com/wdm0006/janitor/pkg/io/ioutils"
 )
 
 type WriterOptions struct {
@@ -14,12 +14,12 @@ type WriterOptions struct {
 
 // WriteAll writes a Frame to a CSV file with headers.
 func WriteAll(path string, f *j.Frame, opt WriterOptions) error {
-    out, err := os.Create(path)
+    out, err := iox.CreateMaybeCompressed(path)
     if err != nil {
         return err
     }
     defer func() { _ = out.Close() }()
-	w := csv.NewWriter(out)
+    w := csv.NewWriter(out)
 	if opt.Delimiter != 0 {
 		w.Comma = opt.Delimiter
 	}

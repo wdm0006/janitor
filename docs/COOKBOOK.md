@@ -117,4 +117,54 @@ defer sw.Close()
 p := j.NewPipeline().Add(&imp.Mean{Column: "x"})
 _ = j.RunStream(context.Background(), p, sr, sw)
 ```
+- CSV → Parquet (streaming):
+```
+{
+  "input": {"type": "csv", "path": "data/*.csv", "has_header": true},
+  "output": {"type": "parquet", "path": "out/{basename}.parquet"},
+  "steps": []
+}
+```
+- Parquet → CSV (streaming):
+```
+{
+  "input": {"type": "parquet", "path": "data/input.parquet"},
+  "output": {"type": "csv", "path": "out/converted.csv"},
+  "steps": []
+}
+```
 
+Partitioned Outputs
+-------------------
+- Stream CSV to partitioned JSONL by column:
+```
+{
+  "input": {"type": "csv", "path": "data/*.csv", "has_header": true},
+  "output": {"type": "jsonl", "path": "out/{basename}/{col:country}.jsonl", "partition_by": ["country"]},
+  "steps": []
+}
+```
+- Stream JSONL to partitioned Parquet:
+```
+{
+  "input": {"type": "jsonl", "path": "data/*.jsonl"},
+  "output": {"type": "parquet", "path": "out/{basename}/{col:date}.parquet", "partition_by": ["date"]},
+  "steps": []
+}
+```
+
+Progress & ETA
+--------------
+- Add `--expected-rows N` to show ETA and a progress bar while streaming.
+```
+janitor --config cfg.json --chunk-size 10000 --expected-rows 1000000 --verbose
+```
+CSV Repair & Strict Mode
+------------------------
+- By default, CSV short/long records are tolerated and repaired; a summary prints in verbose mode.
+- To error on any mismatch, set `input.csv_strict` to true in your config.
+
+STDIN/STDOUT & Gzip
+-------------------
+- Use `-` as `input.path` to read stdin and as `output.path` to write stdout.
+- Gzip is auto‑detected on read and created on write based on the `.gz` extension.
