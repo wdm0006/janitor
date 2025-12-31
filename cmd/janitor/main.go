@@ -6,8 +6,12 @@ import (
     "flag"
     "fmt"
     "io"
+    "log"
+    "net/http"
+    _ "net/http/pprof"
     "os"
     "path/filepath"
+    "runtime/pprof"
     "strings"
     "time"
 
@@ -54,6 +58,11 @@ func main() {
     profTopK := flag.Int("profile-topk", 5, "Top-K frequent values to show for string/time columns")
     profJSON := flag.Bool("profile-json", false, "Emit profile in JSON format")
     expectedRows := flag.Int("expected-rows", 0, "Optional expected total rows for ETA in streaming progress")
+    cpuProfile := flag.String("cpu-profile", "", "Write CPU profile to file (pprof)")
+    memProfile := flag.String("mem-profile", "", "Write heap profile to file on exit (pprof)")
+    pprofAddr := flag.String("pprof-addr", "", "Serve net/http/pprof on this address (e.g., :6060)")
+    metricsAddr := flag.String("metrics-addr", "", "Serve expvar metrics and /healthz on this address (e.g., :9090)")
+    logJSON := flag.Bool("log-json", false, "Emit progress logs as JSON lines")
     dryRun := flag.Bool("dry-run", false, "Infer schema and print planned steps, without reading/writing data")
     flag.Parse()
 
@@ -76,6 +85,35 @@ func main() {
     if err := parseConfig(*configPath, b, &cfg); err != nil {
         fmt.Fprintln(os.Stderr, err)
         os.Exit(1)
+    }
+
+    // Observability: pprof + expvar servers
+    if *pprofAddr != "" {
+        go func() {
+            log.Printf("pprof listening on %s", *pprofAddr)
+            _ = http.ListenAndServe(*pprofAddr, nil)
+        }()
+    }
+    if *metricsAddr != "" {
+        go func() {
+            http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
+            log.Printf("metrics listening on %s", *metricsAddr)
+            _ = http.ListenAndServe(*metricsAddr, nil)
+        }()
+    }
+    if *cpuProfile != "" {
+        f, err := os.Create(*cpuProfile)
+        if err != nil { log.Fatalf("cpu profile: %v", err) }
+        _ = pprof.StartCPUProfile(f)
+        defer func() { pprof.StopCPUProfile(); _ = f.Close() }()
+    }
+    if *memProfile != "" {
+        defer func() {
+            f, err := os.Create(*memProfile)
+            if err != nil { log.Printf("mem profile: %v", err); return }
+            defer func() { _ = f.Close() }()
+            _ = pprof.WriteHeapProfile(f)
+        }()
     }
 
     var frame *j.Frame
@@ -165,7 +203,7 @@ func main() {
         case "parquet":
             pr, err := parquetio.OpenReader(cfg.Input.Path, 50)
             if err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
-            defer func() { _ = pr.Close() }()
+        defer func() { _ = pr.Close() }()
             schema := pr.Schema()
             fmt.Fprintf(os.Stderr, "dry-run schema (parquet): %v\nsteps: %v\n", schema, stepNames)
         default:
@@ -184,7 +222,7 @@ func main() {
             if cfg.Input.Delimiter != "" { delim = rune(cfg.Input.Delimiter[0]) }
             sr, f, err := csvio.NewStreamReader(cfg.Input.Path, csvio.ReaderOptions{HasHeader: cfg.Input.HasHeader, Delimiter: delim, SampleRows: 200}, *chunkSize)
             if err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
-            defer func() { _ = f.Close() }()
+            defer func() { if f != nil { _ = f.Close() } }()
             // create collector
             col := profpkg.NewCollector(sr.Schema(), *profTopK)
             // iterate
@@ -344,7 +382,7 @@ func main() {
                     } else {
                         sw, err := csvio.NewStreamWriter(outPath, sr.Schema(), csvio.WriterOptions{Delimiter: outDelim})
                         if err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
-                    if err := runStreamWithProgress(context.Background(), p, sr, sw, *verbose, *expectedRows); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
+                    if err := runStreamWithProgress(context.Background(), p, sr, sw, *verbose, *expectedRows, *logJSON); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
                     }
                 case "jsonl":
                     outPath := cfg.Output.Path
@@ -358,7 +396,7 @@ func main() {
                     } else {
                         sw, err := jsonlio.NewStreamWriter(outPath)
                         if err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
-                    if err := runStreamWithProgress(context.Background(), p, sr, sw, *verbose, *expectedRows); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
+                        if err := runStreamWithProgress(context.Background(), p, sr, sw, *verbose, *expectedRows, *logJSON); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
                     }
                 default:
                     fmt.Fprintf(os.Stderr, "unsupported output type %q for streaming\n", cfg.Output.Type)
@@ -379,7 +417,7 @@ func main() {
 					fmt.Fprintln(os.Stderr, err)
 					os.Exit(1)
 				}
-                if err := runStreamWithProgress(context.Background(), p, sr, sw, *verbose, *expectedRows); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
+                    if err := runStreamWithProgress(context.Background(), p, sr, sw, *verbose, *expectedRows, *logJSON); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
                 case "", "csv":
                 outDelim := ','
                 if cfg.Output.Delimiter != "" {
@@ -390,7 +428,7 @@ func main() {
                     fmt.Fprintln(os.Stderr, err)
                     os.Exit(1)
                 }
-                if err := runStreamWithProgress(context.Background(), p, sr, sw, *verbose, *expectedRows); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
+                    if err := runStreamWithProgress(context.Background(), p, sr, sw, *verbose, *expectedRows, *logJSON); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
             default:
                 fmt.Fprintf(os.Stderr, "unsupported output type %q for streaming\n", cfg.Output.Type)
                 os.Exit(2)
@@ -453,7 +491,7 @@ func parseConfig(path string, b []byte, cfg *Config) error {
 }
 
 // runStreamWithProgress processes chunks and prints periodic progress when verbose.
-func runStreamWithProgress(ctx context.Context, p *j.Pipeline, src j.ChunkSource, sink j.ChunkSink, verbose bool, expected int) error {
+func runStreamWithProgress(ctx context.Context, p *j.Pipeline, src j.ChunkSource, sink j.ChunkSink, verbose bool, expected int, logJSON bool) error {
     if !verbose { return j.RunStream(ctx, p, src, sink) }
     ticker := time.NewTicker(1 * time.Second)
     defer ticker.Stop()
@@ -492,10 +530,22 @@ func runStreamWithProgress(ctx context.Context, p *j.Pipeline, src j.ChunkSource
                 if pct > 1 { pct = 1 }
                 width := 30
                 filled := int(pct * float64(width))
-                bar := strings.Repeat("=", filled) + strings.Repeat(" ", width-filled)
-                fmt.Fprintf(os.Stderr, "[%s] %5.1f%% rows=%d/%d (%.1f r/s) ETA=%s\n", bar, pct*100, rows, expected, rate, eta.Truncate(time.Second))
+                if logJSON {
+                    evt := map[string]any{"type": "progress", "rows": rows, "expected": expected, "rate_rps": rate, "eta": int(eta.Truncate(time.Second).Seconds())}
+                    b, _ := json.Marshal(evt)
+                    fmt.Fprintln(os.Stderr, string(b))
+                } else {
+                    bar := strings.Repeat("=", filled) + strings.Repeat(" ", width-filled)
+                    fmt.Fprintf(os.Stderr, "[%s] %5.1f%% rows=%d/%d (%.1f r/s) ETA=%s\n", bar, pct*100, rows, expected, rate, eta.Truncate(time.Second))
+                }
             } else {
-                fmt.Fprintf(os.Stderr, "processed rows=%d (%.1f rows/s) ...\n", rows, rate)
+                if logJSON {
+                    evt := map[string]any{"type": "progress", "rows": rows, "rate_rps": rate}
+                    b, _ := json.Marshal(evt)
+                    fmt.Fprintln(os.Stderr, string(b))
+                } else {
+                    fmt.Fprintf(os.Stderr, "processed rows=%d (%.1f rows/s) ...\n", rows, rate)
+                }
             }
         }
     }

@@ -98,6 +98,30 @@ Docs
 - Cookbook recipes: see `docs/COOKBOOK.md` for CSV/JSONL/Parquet conversions, partitioned outputs, and streaming with ETA.
 - Demo: see `docs/demo` for how to record/update the GIF.
 
+Benchmarks
+----------
+- We provide a reproducible synthetic benchmark tool at `cmd/benchjanitor`.
+- It generates a large synthetic dataset in streaming chunks and measures wall time, throughput, and memory.
+
+Example run (generate 5M rows with 4 float, 2 int, 2 string columns):
+```
+go run ./cmd/benchjanitor --rows 5000000 --chunk 200000 --float-cols 4 --int-cols 2 --string-cols 2 --missing 0.05
+```
+Sample output (your results will vary by machine):
+```
+Rows: 5000000
+Elapsed: 7.5s
+Throughput: 666666 rows/s
+Current Alloc: 128 MB
+Total Alloc (delta): 512 MB
+GC cycles (delta): 3
+```
+
+Notes:
+- Use `--json` to emit machine‑readable results.
+- Use CPU/heap profiling flags on the main CLI for end‑to‑end IO pipelines.
+- For real‑world benchmarks, run the main CLI on your datasets in streaming mode with `--expected-rows` to collect ETA and progress.
+
 Roadmap
 -------
 - See ROADMAP.md for milestones and upcoming features.
