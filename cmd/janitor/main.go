@@ -378,7 +378,7 @@ func main() {
                         makeSink := func(path string, schema j.Schema) (j.ChunkSink, error) {
                             return csvio.NewStreamWriter(path, schema, csvio.WriterOptions{Delimiter: outDelim})
                         }
-                        if err := runStreamPartitioned(context.Background(), p, sr, outPath, makeSink, sr.Schema(), cfg.Output.PartitionBy, *verbose); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
+                        if err := runStreamPartitioned(context.Background(), p, sr, outPath, makeSink, sr.Schema(), cfg.Output.PartitionBy, *verbose, *expectedRows, *logJSON); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
                     } else {
                         sw, err := csvio.NewStreamWriter(outPath, sr.Schema(), csvio.WriterOptions{Delimiter: outDelim})
                         if err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
@@ -392,7 +392,7 @@ func main() {
                     }
                     if len(cfg.Output.PartitionBy) > 0 {
                         makeSink := func(path string, schema j.Schema) (j.ChunkSink, error) { return jsonlio.NewStreamWriter(path) }
-                        if err := runStreamPartitioned(context.Background(), p, sr, outPath, makeSink, sr.Schema(), cfg.Output.PartitionBy, *verbose); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
+                        if err := runStreamPartitioned(context.Background(), p, sr, outPath, makeSink, sr.Schema(), cfg.Output.PartitionBy, *verbose, *expectedRows, *logJSON); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
                     } else {
                         sw, err := jsonlio.NewStreamWriter(outPath)
                         if err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
@@ -554,7 +554,7 @@ func runStreamWithProgress(ctx context.Context, p *j.Pipeline, src j.ChunkSource
 // runStreamPartitioned applies p to each chunk from src, splits rows by partition columns,
 // and writes each partition to a sink keyed by the expanded outPath template. outPath must
 // include placeholders like {col:Name} which will be replaced with the row's column value.
-func runStreamPartitioned(ctx context.Context, p *j.Pipeline, src j.ChunkSource, outPath string, makeSink func(path string, schema j.Schema) (j.ChunkSink, error), schema j.Schema, partCols []string, verbose bool) error {
+func runStreamPartitioned(ctx context.Context, p *j.Pipeline, src j.ChunkSource, outPath string, makeSink func(path string, schema j.Schema) (j.ChunkSink, error), schema j.Schema, partCols []string, verbose bool, expected int, logJSON bool) error {
     sinks := map[string]j.ChunkSink{}
     closeAll := func() {
         for _, s := range sinks { _ = s.Close() }
@@ -565,6 +565,7 @@ func runStreamPartitioned(ctx context.Context, p *j.Pipeline, src j.ChunkSource,
     done := make(chan error, 1)
     var rows int
     start := time.Now()
+    var rates []float64
     go func() {
         for {
             f, err := src.Next()
@@ -597,8 +598,37 @@ func runStreamPartitioned(ctx context.Context, p *j.Pipeline, src j.ChunkSource,
             return err
         case <-ticker.C:
             elapsed := time.Since(start).Seconds()
-            rate := float64(rows) / (elapsed + 1e-9)
-            fmt.Fprintf(os.Stderr, "processed rows=%d (%.1f rows/s) ...\n", rows, rate)
+            instRate := float64(rows) / (elapsed + 1e-9)
+            rates = append(rates, instRate)
+            if len(rates) > 5 { rates = rates[len(rates)-5:] }
+            var sum float64
+            for _, r := range rates { sum += r }
+            rate := sum / float64(len(rates))
+            if expected > 0 {
+                remaining := expected - rows
+                if remaining < 0 { remaining = 0 }
+                eta := time.Duration(float64(remaining)/(rate+1e-9)) * time.Second
+                pct := float64(rows) / float64(expected)
+                if pct > 1 { pct = 1 }
+                width := 30
+                filled := int(pct * float64(width))
+                if logJSON {
+                    evt := map[string]any{"type": "progress", "rows": rows, "expected": expected, "rate_rps": rate, "eta": int(eta.Truncate(time.Second).Seconds())}
+                    b, _ := json.Marshal(evt)
+                    fmt.Fprintln(os.Stderr, string(b))
+                } else {
+                    bar := strings.Repeat("=", filled) + strings.Repeat(" ", width-filled)
+                    fmt.Fprintf(os.Stderr, "[%s] %5.1f%% rows=%d/%d (%.1f r/s) ETA=%s\n", bar, pct*100, rows, expected, rate, eta.Truncate(time.Second))
+                }
+            } else {
+                if logJSON {
+                    evt := map[string]any{"type": "progress", "rows": rows, "rate_rps": rate}
+                    b, _ := json.Marshal(evt)
+                    fmt.Fprintln(os.Stderr, string(b))
+                } else {
+                    fmt.Fprintf(os.Stderr, "processed rows=%d (%.1f rows/s) ...\n", rows, rate)
+                }
+            }
         }
     }
 }

@@ -1,20 +1,23 @@
 package csvio
 
 import (
-	"encoding/csv"
-	"io"
-	"os"
-	"strconv"
-	"strings"
+    "encoding/csv"
+    "io"
+    "os"
+    "strconv"
+    "strings"
 
-	j "github.com/wdm0006/janitor/pkg/janitor"
+    j "github.com/wdm0006/janitor/pkg/janitor"
+    "fmt"
 )
 
 // StreamReader reads CSV into Frame chunks of up to ChunkSize rows.
 type StreamReader struct {
-	r         *Reader
-	schema    j.Schema
-	chunkSize int
+    r         *Reader
+    schema    j.Schema
+    chunkSize int
+    shortRecords int
+    longRecords  int
 }
 
 // NewStreamReader opens the file, infers schema (respecting options), and returns a StreamReader.
@@ -38,11 +41,12 @@ func (s *StreamReader) Next() (*j.Frame, error) {
 	}
 	f := j.NewFrame(s.schema)
 	// drain buffered lines first
-	for len(s.r.buf) > 0 && f.Rows() < s.chunkSize {
-		rec := s.r.buf[0]
-		s.r.buf = s.r.buf[1:]
-		appendCSVRecord(f, s.schema, rec)
-	}
+    for len(s.r.buf) > 0 && f.Rows() < s.chunkSize {
+        rec := s.r.buf[0]
+        s.r.buf = s.r.buf[1:]
+        if len(rec) < len(s.schema.Columns) { s.shortRecords++ } else if len(rec) > len(s.schema.Columns) { s.longRecords++ }
+        appendCSVRecord(f, s.schema, rec)
+    }
 	for f.Rows() < s.chunkSize {
 		rec, err := s.r.r.Read()
 		if err == io.EOF {
@@ -54,21 +58,23 @@ func (s *StreamReader) Next() (*j.Frame, error) {
 		if err != nil {
 			return nil, err
 		}
-		appendCSVRecord(f, s.schema, rec)
-	}
-	return f, nil
+        if len(rec) < len(s.schema.Columns) { s.shortRecords++ } else if len(rec) > len(s.schema.Columns) { s.longRecords++ }
+        appendCSVRecord(f, s.schema, rec)
+    }
+    return f, nil
 }
 
 func (s *StreamReader) Schema() j.Schema { return s.schema }
 
 func appendCSVRecord(f *j.Frame, schema j.Schema, rec []string) {
-	f.AppendNullRow()
-	row := f.Rows() - 1
-	for i, cs := range schema.Columns {
-		val := strings.TrimSpace(rec[i])
-		if val == "" {
-			continue
-		}
+    f.AppendNullRow()
+    row := f.Rows() - 1
+    for i, cs := range schema.Columns {
+        if i >= len(rec) { continue }
+        val := strings.TrimSpace(rec[i])
+        if val == "" {
+            continue
+        }
 		switch cs.Type {
 		case j.KindFloat:
 			if x, err := strconv.ParseFloat(val, 64); err == nil {
@@ -86,6 +92,14 @@ func appendCSVRecord(f *j.Frame, schema j.Schema, rec []string) {
 			_ = f.SetCell(row, cs.Name, val)
 		}
 	}
+}
+
+func (s *StreamReader) Warnings() string {
+    parts := []string{}
+    if s.shortRecords > 0 { parts = append(parts, fmt.Sprintf("short_records=%d", s.shortRecords)) }
+    if s.longRecords > 0 { parts = append(parts, fmt.Sprintf("long_records=%d", s.longRecords)) }
+    if len(parts) == 0 { return "" }
+    return strings.Join(parts, ", ")
 }
 
 // StreamWriter appends frames to a CSV file with a header (written once).
