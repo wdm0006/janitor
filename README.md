@@ -94,6 +94,7 @@ Integrations
 
 Docs
 ----
+- CLI reference: see `docs/CLI.md` for flags, config schema, and usage patterns.
 - Cookbook recipes: see `docs/COOKBOOK.md` for CSV/JSONL/Parquet conversions, partitioned outputs, and streaming with ETA.
 - Demo: see `docs/demo` for how to record/update the GIF.
 
@@ -104,4 +105,3 @@ Roadmap
 Contributing
 ------------
 - See CONTRIBUTING.md for development environment, style, testing, and release info.
-
