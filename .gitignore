@@ -31,3 +31,7 @@ _testmain.go
 # external packages folder
 vendor/
 
+# Compiled command binaries (extensionless build outputs)
+/janitor
+/benchjanitor
+
