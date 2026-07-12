@@ -52,6 +52,35 @@ func TestMean(t *testing.T) {
 	}
 }
 
+func TestMeanIntNegativeRounding(t *testing.T) {
+	s := j.Schema{Columns: []j.ColumnSchema{{Name: "x", Type: j.KindInt, Nullable: true}}}
+	f := j.NewFrame(s)
+	for i := 0; i < 4; i++ {
+		f.AppendNullRow()
+	}
+	col, _ := f.ColumnByName("x")
+	c := col.(*j.IntColumn)
+	c.Set(0, -3)
+	c.Set(1, -2)
+	c.Set(2, -2)
+	// row 3 remains null; non-null mean = -7/3 = -2.333..., nearest int is -2
+
+	tform := &Mean{Column: "x"}
+	out, err := tform.Apply(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	col, _ = out.ColumnByName("x")
+	c = col.(*j.IntColumn)
+	if c.IsNull(3) {
+		t.Fatalf("mean imputer left null at row 3")
+	}
+	got, _ := c.Get(3)
+	if got != -2 {
+		t.Fatalf("expected imputed value -2, got %d", got)
+	}
+}
+
 func TestMedian(t *testing.T) {
 	f := makeFloatFrame()
 	tform := &Median{Column: "x"}

@@ -2,6 +2,8 @@ package impute
 
 import (
 	"context"
+	"math"
+
 	j "github.com/wdm0006/janitor/pkg/janitor"
 )
 
@@ -51,7 +53,7 @@ func (t *Mean) Apply(ctx context.Context, f *j.Frame) (*j.Frame, error) {
 		// round to nearest
 		for i := 0; i < c.Len(); i++ {
 			if c.IsNull(i) {
-				c.Set(i, int64(mean+0.5))
+				c.Set(i, int64(math.Round(mean)))
 			}
 		}
 	}
