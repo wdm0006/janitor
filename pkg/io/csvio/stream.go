@@ -26,6 +26,10 @@ func NewStreamReader(path string, opt ReaderOptions, chunkSize int) (*StreamRead
 	if err != nil {
 		return nil, nil, err
 	}
+    // Surface short/long records to the application layer so strict mode can
+    // reject them and non-strict mode can repair them; without this the csv
+    // reader errors on any field-count mismatch before we can decide.
+    rr.r.FieldsPerRecord = -1
 	schema, _, err := rr.InferSchema()
     if err != nil {
         _ = f.Close()
@@ -44,7 +48,9 @@ func (s *StreamReader) Next() (*j.Frame, error) {
     for len(s.r.buf) > 0 && f.Rows() < s.chunkSize {
         rec := s.r.buf[0]
         s.r.buf = s.r.buf[1:]
-        if len(rec) < len(s.schema.Columns) { s.shortRecords++ } else if len(rec) > len(s.schema.Columns) { s.longRecords++ }
+        if err := s.checkRecord(rec, "buffered read"); err != nil {
+            return nil, err
+        }
         appendCSVRecord(f, s.schema, rec)
     }
 	for f.Rows() < s.chunkSize {
@@ -58,10 +64,30 @@ func (s *StreamReader) Next() (*j.Frame, error) {
 		if err != nil {
 			return nil, err
 		}
-        if len(rec) < len(s.schema.Columns) { s.shortRecords++ } else if len(rec) > len(s.schema.Columns) { s.longRecords++ }
+        if err := s.checkRecord(rec, "row"); err != nil {
+            return nil, err
+        }
         appendCSVRecord(f, s.schema, rec)
     }
     return f, nil
+}
+
+// checkRecord counts short/long records for warnings and, in strict mode,
+// returns a descriptive error mirroring the batch ReadAll contract.
+func (s *StreamReader) checkRecord(rec []string, where string) error {
+    n := len(s.schema.Columns)
+    if len(rec) < n {
+        s.shortRecords++
+        if s.r.opt.Strict {
+            return fmt.Errorf("csv short record at %s: need %d fields, got %d", where, n, len(rec))
+        }
+    } else if len(rec) > n {
+        s.longRecords++
+        if s.r.opt.Strict {
+            return fmt.Errorf("csv long record at %s: need %d fields, got %d", where, n, len(rec))
+        }
+    }
+    return nil
 }
 
 func (s *StreamReader) Schema() j.Schema { return s.schema }
