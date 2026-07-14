@@ -109,7 +109,11 @@ func (r *Reader) InferSchema() (j.Schema, []string, error) {
 	kinds := inferKinds(sample)
 	schema := j.Schema{Columns: make([]j.ColumnSchema, len(names))}
 	for i := range names {
-		schema.Columns[i] = j.ColumnSchema{Name: names[i], Type: kinds[i], Nullable: true}
+		k := j.KindString
+		if i < len(kinds) {
+			k = kinds[i]
+		}
+		schema.Columns[i] = j.ColumnSchema{Name: names[i], Type: k, Nullable: true}
 	}
 	// retain sampled rows for subsequent ReadAll
 	r.buf = append(r.buf, sample...)
