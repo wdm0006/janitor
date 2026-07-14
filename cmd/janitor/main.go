@@ -14,6 +14,7 @@ import (
     "runtime/pprof"
     "strings"
     "time"
+    "unicode/utf8"
 
     csvio "github.com/wdm0006/janitor/pkg/io/csvio"
 	jsonlio "github.com/wdm0006/janitor/pkg/io/jsonlio"
@@ -87,6 +88,17 @@ func main() {
         os.Exit(1)
     }
 
+    inputDelimiter, err := parseDelimiter(cfg.Input.Delimiter, rune(0))
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "invalid input delimiter: %v\n", err)
+        os.Exit(1)
+    }
+    outputDelimiter, err := parseDelimiter(cfg.Output.Delimiter, ',')
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "invalid output delimiter: %v\n", err)
+        os.Exit(1)
+    }
+
     // Observability: pprof + expvar servers
     if *pprofAddr != "" {
         go func() {
@@ -122,11 +134,7 @@ func main() {
 	if !useStream {
 		switch cfg.Input.Type {
 		case "", "csv":
-            delim := rune(0)
-            if cfg.Input.Delimiter != "" {
-                delim = rune(cfg.Input.Delimiter[0])
-            }
-            rdr, file, err := csvio.Open(cfg.Input.Path, csvio.ReaderOptions{HasHeader: cfg.Input.HasHeader, Delimiter: delim, SampleRows: 100, Strict: cfg.Input.CSVStrict})
+            rdr, file, err := csvio.Open(cfg.Input.Path, csvio.ReaderOptions{HasHeader: cfg.Input.HasHeader, Delimiter: inputDelimiter, SampleRows: 100, Strict: cfg.Input.CSVStrict})
             if err != nil {
                 fmt.Fprintln(os.Stderr, err)
                 os.Exit(1)
@@ -185,9 +193,7 @@ func main() {
         }
         switch cfg.Input.Type {
         case "", "csv":
-            delim := rune(0)
-            if cfg.Input.Delimiter != "" { delim = rune(cfg.Input.Delimiter[0]) }
-            rdr, f, err := csvio.Open(cfg.Input.Path, csvio.ReaderOptions{HasHeader: cfg.Input.HasHeader, Delimiter: delim, SampleRows: 50})
+            rdr, f, err := csvio.Open(cfg.Input.Path, csvio.ReaderOptions{HasHeader: cfg.Input.HasHeader, Delimiter: inputDelimiter, SampleRows: 50})
             if err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
             if f != nil { defer func() { _ = f.Close() }() }
             schema, _, err := rdr.InferSchema()
@@ -218,9 +224,7 @@ func main() {
         if *chunkSize <= 0 { *chunkSize = 10000 }
         switch cfg.Input.Type {
         case "", "csv":
-            delim := rune(0)
-            if cfg.Input.Delimiter != "" { delim = rune(cfg.Input.Delimiter[0]) }
-            sr, f, err := csvio.NewStreamReader(cfg.Input.Path, csvio.ReaderOptions{HasHeader: cfg.Input.HasHeader, Delimiter: delim, SampleRows: 200}, *chunkSize)
+            sr, f, err := csvio.NewStreamReader(cfg.Input.Path, csvio.ReaderOptions{HasHeader: cfg.Input.HasHeader, Delimiter: inputDelimiter, SampleRows: 200}, *chunkSize)
             if err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
             defer func() { if f != nil { _ = f.Close() } }()
             // create collector
@@ -348,8 +352,6 @@ func main() {
         // streaming path
         switch cfg.Input.Type {
         case "", "csv":
-            delim := rune(0)
-            if cfg.Input.Delimiter != "" { delim = rune(cfg.Input.Delimiter[0]) }
             // expand globs
             paths := []string{cfg.Input.Path}
             if hasWildcards(cfg.Input.Path) {
@@ -362,13 +364,11 @@ func main() {
                 os.Exit(2)
             }
             for _, in := range paths {
-                sr, f, err := csvio.NewStreamReader(in, csvio.ReaderOptions{HasHeader: cfg.Input.HasHeader, Delimiter: delim, SampleRows: 100, Strict: cfg.Input.CSVStrict}, *chunkSize)
+                sr, f, err := csvio.NewStreamReader(in, csvio.ReaderOptions{HasHeader: cfg.Input.HasHeader, Delimiter: inputDelimiter, SampleRows: 100, Strict: cfg.Input.CSVStrict}, *chunkSize)
                 if err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
                 if f != nil { defer func() { _ = f.Close() }() }
                 switch cfg.Output.Type {
                 case "", "csv":
-                    outDelim := ','
-                    if cfg.Output.Delimiter != "" { outDelim = rune(cfg.Output.Delimiter[0]) }
                     outPath := cfg.Output.Path
                     if strings.Contains(outPath, "{basename}") {
                         base := filepath.Base(in)
@@ -376,11 +376,11 @@ func main() {
                     }
                     if len(cfg.Output.PartitionBy) > 0 {
                         makeSink := func(path string, schema j.Schema) (j.ChunkSink, error) {
-                            return csvio.NewStreamWriter(path, schema, csvio.WriterOptions{Delimiter: outDelim})
+                            return csvio.NewStreamWriter(path, schema, csvio.WriterOptions{Delimiter: outputDelimiter})
                         }
                         if err := runStreamPartitioned(context.Background(), p, sr, outPath, makeSink, sr.Schema(), cfg.Output.PartitionBy, *verbose, *expectedRows, *logJSON); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
                     } else {
-                        sw, err := csvio.NewStreamWriter(outPath, sr.Schema(), csvio.WriterOptions{Delimiter: outDelim})
+                        sw, err := csvio.NewStreamWriter(outPath, sr.Schema(), csvio.WriterOptions{Delimiter: outputDelimiter})
                         if err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
                     if err := runStreamWithProgress(context.Background(), p, sr, sw, *verbose, *expectedRows, *logJSON); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
                     }
@@ -419,11 +419,7 @@ func main() {
 				}
                     if err := runStreamWithProgress(context.Background(), p, sr, sw, *verbose, *expectedRows, *logJSON); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
                 case "", "csv":
-                outDelim := ','
-                if cfg.Output.Delimiter != "" {
-                    outDelim = rune(cfg.Output.Delimiter[0])
-                }
-                sw, err := csvio.NewStreamWriter(cfg.Output.Path, sr.Schema(), csvio.WriterOptions{Delimiter: outDelim})
+                sw, err := csvio.NewStreamWriter(cfg.Output.Path, sr.Schema(), csvio.WriterOptions{Delimiter: outputDelimiter})
                 if err != nil {
                     fmt.Fprintln(os.Stderr, err)
                     os.Exit(1)
@@ -448,11 +444,7 @@ func main() {
 	}
 	switch cfg.Output.Type {
 	case "", "csv":
-		outDelim := ','
-		if cfg.Output.Delimiter != "" {
-			outDelim = rune(cfg.Output.Delimiter[0])
-		}
-        if err := csvio.WriteAll(cfg.Output.Path, outFrame, csvio.WriterOptions{Delimiter: outDelim}); err != nil {
+        if err := csvio.WriteAll(cfg.Output.Path, outFrame, csvio.WriterOptions{Delimiter: outputDelimiter}); err != nil {
             fmt.Fprintln(os.Stderr, err)
             os.Exit(1)
         }
@@ -473,6 +465,20 @@ func main() {
     if *verbose {
         fmt.Fprintf(os.Stderr, "batch complete: rows=%d cols=%d steps=%v -> %s\n", outFrame.Rows(), len(outFrame.Schema().Columns), stepNames, cfg.Output.Path)
     }
+}
+
+func parseDelimiter(value string, defaultDelimiter rune) (rune, error) {
+    if value == "" {
+        return defaultDelimiter, nil
+    }
+    if !utf8.ValidString(value) {
+        return 0, fmt.Errorf("delimiter must be valid UTF-8")
+    }
+    delimiter, size := utf8.DecodeRuneInString(value)
+    if size != len(value) {
+        return 0, fmt.Errorf("delimiter must contain exactly one Unicode rune, got %q", value)
+    }
+    return delimiter, nil
 }
 
 // parseConfig detects format from extension (.json, .yaml/.yml, .toml) and unmarshals into cfg.
