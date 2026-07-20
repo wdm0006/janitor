@@ -1,13 +1,10 @@
-# janitor cleaning rules (scaffold)
-version: v0
+# janitor cleaning rules
 steps:
-  - impute:
+  - impute_constant:
       column: sepal_length
-      strategy: constant
       value: 0
   - trim:
       column: species
-  - validate:
+  - validate_in:
       column: species
-      in: [Iris-setosa, Iris-versicolor, Iris-virginica]
-
+      values: [Iris-setosa, Iris-versicolor, Iris-virginica]

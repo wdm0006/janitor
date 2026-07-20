@@ -484,16 +484,51 @@ func parseDelimiter(value string, defaultDelimiter rune) (rune, error) {
 // parseConfig detects format from extension (.json, .yaml/.yml, .toml) and unmarshals into cfg.
 func parseConfig(path string, b []byte, cfg *Config) error {
     ext := strings.ToLower(filepath.Ext(path))
+    var err error
     switch ext {
     case ".json", "":
-        return json.Unmarshal(b, cfg)
+        err = json.Unmarshal(b, cfg)
     case ".yaml", ".yml":
-        return yaml.Unmarshal(b, cfg)
+        err = normalizeConfig(b, yaml.Unmarshal, cfg)
     case ".toml":
-        return toml.Unmarshal(b, cfg)
+        err = normalizeConfig(b, toml.Unmarshal, cfg)
     default:
-        return json.Unmarshal(b, cfg)
+        err = json.Unmarshal(b, cfg)
     }
+    if err != nil {
+        return fmt.Errorf("parse config: %w", err)
+    }
+    for i, raw := range cfg.Steps {
+        var step map[string]json.RawMessage
+        if err := json.Unmarshal(raw, &step); err != nil {
+            return fmt.Errorf("parse config: step %d must be an object with exactly one key: %w", i+1, err)
+        }
+        if len(step) != 1 {
+            return fmt.Errorf("parse config: step %d must contain exactly one key, got %d", i+1, len(step))
+        }
+        for _, params := range step {
+            var object map[string]json.RawMessage
+            if err := json.Unmarshal(params, &object); err != nil {
+                return fmt.Errorf("parse config: step %d parameters must be an object: %w", i+1, err)
+            }
+            if object == nil {
+                return fmt.Errorf("parse config: step %d parameters must be an object", i+1)
+            }
+        }
+    }
+    return nil
+}
+
+func normalizeConfig(b []byte, unmarshal func([]byte, any) error, cfg *Config) error {
+    var value any
+    if err := unmarshal(b, &value); err != nil {
+        return err
+    }
+    normalized, err := json.Marshal(value)
+    if err != nil {
+        return err
+    }
+    return json.Unmarshal(normalized, cfg)
 }
 
 // runStreamWithProgress processes chunks and prints periodic progress when verbose.
