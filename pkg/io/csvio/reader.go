@@ -51,6 +51,10 @@ func Open(path string, opt ReaderOptions) (*Reader, *os.File, error) {
         rr.Comma = opt.Delimiter
     }
     rr.ReuseRecord = true
+    // Surface field-count mismatches to the application layer so strict mode can
+    // reject them and non-strict mode can repair them; without this the csv
+    // reader errors on any mismatch before we can decide.
+    rr.FieldsPerRecord = -1
     return &Reader{r: rr, opt: opt}, f, nil
 }
 
@@ -59,6 +63,7 @@ func NewReaderFrom(r io.Reader, opt ReaderOptions) *Reader {
     rr := csv.NewReader(r)
     if opt.Delimiter != 0 { rr.Comma = opt.Delimiter }
     rr.ReuseRecord = true
+    rr.FieldsPerRecord = -1
     return &Reader{r: rr, opt: opt}
 }
 
@@ -120,6 +125,23 @@ func (r *Reader) InferSchema() (j.Schema, []string, error) {
 	return schema, names, nil
 }
 
+// checkRecord counts short/long records for warnings and, in strict mode,
+// returns a descriptive error.
+func (r *Reader) checkRecord(rec []string, n int, where string) error {
+    if len(rec) < n {
+        r.shortRecords++
+        if r.opt.Strict {
+            return fmt.Errorf("csv short record at %s: need %d fields, got %d", where, n, len(rec))
+        }
+    } else if len(rec) > n {
+        r.longRecords++
+        if r.opt.Strict {
+            return fmt.Errorf("csv long record at %s: need %d fields, got %d", where, n, len(rec))
+        }
+    }
+    return nil
+}
+
 // ReadAll loads the rest of the CSV into a Frame.
 func (r *Reader) ReadAll(schema j.Schema) (*j.Frame, error) {
     f := j.NewFrame(schema)
@@ -127,12 +149,13 @@ func (r *Reader) ReadAll(schema j.Schema) (*j.Frame, error) {
     for len(r.buf) > 0 {
         rec := r.buf[0]
         r.buf = r.buf[1:]
+        if err := r.checkRecord(rec, len(schema.Columns), "buffered read"); err != nil {
+            return nil, err
+        }
         f.AppendNullRow()
         row := f.Rows() - 1
         for i, cs := range schema.Columns {
             if i >= len(rec) {
-                r.shortRecords++
-                if r.opt.Strict { return nil, fmt.Errorf("csv short record at buffered read: need %d fields, got %d", len(schema.Columns), len(rec)) }
                 continue
             }
             val := strings.ToValidUTF8(strings.TrimSpace(rec[i]), "?")
@@ -165,17 +188,14 @@ func (r *Reader) ReadAll(schema j.Schema) (*j.Frame, error) {
         if err != nil {
             return nil, err
         }
+        if err := r.checkRecord(rec, len(schema.Columns), "row"); err != nil {
+            return nil, err
+        }
         // append a null row then set non-empty values
         f.AppendNullRow()
         row := f.Rows() - 1
-        if len(rec) > len(schema.Columns) {
-            r.longRecords++
-            if r.opt.Strict { return nil, fmt.Errorf("csv long record at row: need %d fields, got %d", len(schema.Columns), len(rec)) }
-        }
         for i, cs := range schema.Columns {
             if i >= len(rec) {
-                r.shortRecords++
-                if r.opt.Strict { return nil, fmt.Errorf("csv short record at row: need %d fields, got %d", len(schema.Columns), len(rec)) }
                 continue
             }
             val := strings.ToValidUTF8(strings.TrimSpace(rec[i]), "?")

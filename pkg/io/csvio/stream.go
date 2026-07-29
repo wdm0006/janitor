@@ -26,10 +26,6 @@ func NewStreamReader(path string, opt ReaderOptions, chunkSize int) (*StreamRead
 	if err != nil {
 		return nil, nil, err
 	}
-    // Surface short/long records to the application layer so strict mode can
-    // reject them and non-strict mode can repair them; without this the csv
-    // reader errors on any field-count mismatch before we can decide.
-    rr.r.FieldsPerRecord = -1
 	schema, _, err := rr.InferSchema()
     if err != nil {
         _ = f.Close()
