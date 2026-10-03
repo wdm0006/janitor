@@ -95,7 +95,7 @@ func (r *Reader) InferSchema() (j.Schema, []string, error) {
 		}
 	}
 
-	sample := [][]string{rec}
+	sample := [][]string{append([]string(nil), rec...)}
 	max := r.opt.SampleRows
 	if max <= 0 {
 		max = 100
@@ -108,7 +108,7 @@ func (r *Reader) InferSchema() (j.Schema, []string, error) {
 		if err != nil {
 			return j.Schema{}, nil, err
 		}
-		sample = append(sample, rr)
+		sample = append(sample, append([]string(nil), rr...))
 	}
 
 	kinds := inferKinds(sample)
