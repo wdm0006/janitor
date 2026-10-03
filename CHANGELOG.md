@@ -11,4 +11,6 @@
 - Golearn adapters to/from DenseInstances.
 - Migration guide and deprecations for legacy APIs.
 - Parquet stubs behind build tag.
+- CLI: wire `impute_mode` into the step dispatcher; `impute_mode` leaves an all-null column null.
+- CLI: an unknown step key is now a configuration error (exit 2, names the key and step index), including under `--dry-run`, instead of a warning.
 

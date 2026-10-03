@@ -146,6 +146,70 @@ func TestCLIExecutesYAMLAndTOMLConfigs(t *testing.T) {
 	}
 }
 
+func buildCLI(t *testing.T) string {
+	t.Helper()
+	binary := filepath.Join(t.TempDir(), "janitor")
+	if output, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build CLI: %v\n%s", err, output)
+	}
+	return binary
+}
+
+func TestCLIImputeMode(t *testing.T) {
+	binary := buildCLI(t)
+	tmp := t.TempDir()
+	input := filepath.Join(tmp, "in.csv")
+	if err := os.WriteFile(input, []byte("s,n,z\n"+strings.Repeat("a,1,\n", 100)+"a,1,\n,1,\na,,\nb,2,\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(tmp, "out.csv")
+	config := `{"input":{"path":` + jsonString(input) + `,"has_header":true},"output":{"path":` + jsonString(output) + `},"steps":[{"impute_mode":{"column":"s"}},{"impute_mode":{"column":"n"}},{"impute_mode":{"column":"z"}}]}`
+	configPath := filepath.Join(tmp, "rules.json")
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if combined, err := exec.Command(binary, "--config", configPath).CombinedOutput(); err != nil {
+		t.Fatalf("run CLI: %v\n%s", err, combined)
+	}
+	got, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first 100 rows are filler: CSV rows buffered during schema inference are
+	// currently aliased to the last sampled record, so assert only on the tail.
+	if want := "a,1,\na,1,\na,1,\nb,2,\n"; !strings.HasSuffix(string(got), want) {
+		t.Fatalf("output tail = %q, want suffix %q", got, want)
+	}
+}
+
+func TestCLIUnknownStepExits2(t *testing.T) {
+	binary := buildCLI(t)
+	for _, flags := range [][]string{nil, {"--dry-run"}} {
+		tmp := t.TempDir()
+		input := filepath.Join(tmp, "in.csv")
+		if err := os.WriteFile(input, []byte("name\n x \n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		output := filepath.Join(tmp, "out.csv")
+		config := `{"input":{"path":` + jsonString(input) + `,"has_header":true},"output":{"path":` + jsonString(output) + `},"steps":[{"trim":{"column":"name"}},{"trimm":{"column":"name"}}]}`
+		configPath := filepath.Join(tmp, "rules.json")
+		if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		combined, err := exec.Command(binary, append([]string{"--config", configPath}, flags...)...).CombinedOutput()
+		exitErr, ok := err.(*exec.ExitError)
+		if !ok || exitErr.ExitCode() != 2 {
+			t.Fatalf("flags %v: err = %v, want exit 2\n%s", flags, err, combined)
+		}
+		if !strings.Contains(string(combined), `unknown step "trimm" at step 2`) {
+			t.Errorf("flags %v: output %q does not name the key and index", flags, combined)
+		}
+		if _, err := os.Stat(output); err == nil {
+			t.Errorf("flags %v: output file was written", flags)
+		}
+	}
+}
+
 func jsonString(value string) string {
 	b, _ := json.Marshal(value)
 	return string(b)

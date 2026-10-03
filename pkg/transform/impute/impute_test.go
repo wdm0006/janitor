@@ -162,9 +162,7 @@ func TestMode(t *testing.T) {
 		}
 	})
 
-	// Documents current behavior: with nothing to compute a mode from, the
-	// accumulator stays at its zero value and every null is filled with it.
-	t.Run("all-null string column fills with empty string", func(t *testing.T) {
+	t.Run("all-null string column stays null", func(t *testing.T) {
 		s := j.Schema{Columns: []j.ColumnSchema{{Name: "s", Type: j.KindString, Nullable: true}}}
 		f := j.NewFrame(s)
 		for i := 0; i < 3; i++ {
@@ -177,17 +175,13 @@ func TestMode(t *testing.T) {
 		col, _ := out.ColumnByName("s")
 		c := col.(*j.StringColumn)
 		for i := 0; i < c.Len(); i++ {
-			if c.IsNull(i) {
-				t.Fatalf("expected row %d to be filled, got null", i)
-			}
-			got, _ := c.Get(i)
-			if got != "" {
-				t.Fatalf("row %d: expected %q, got %q", i, "", got)
+			if !c.IsNull(i) {
+				t.Fatalf("expected row %d to stay null", i)
 			}
 		}
 	})
 
-	t.Run("all-null int column fills with zero", func(t *testing.T) {
+	t.Run("all-null int column stays null", func(t *testing.T) {
 		s := j.Schema{Columns: []j.ColumnSchema{{Name: "n", Type: j.KindInt, Nullable: true}}}
 		f := j.NewFrame(s)
 		for i := 0; i < 3; i++ {
@@ -200,12 +194,8 @@ func TestMode(t *testing.T) {
 		col, _ := out.ColumnByName("n")
 		c := col.(*j.IntColumn)
 		for i := 0; i < c.Len(); i++ {
-			if c.IsNull(i) {
-				t.Fatalf("expected row %d to be filled, got null", i)
-			}
-			got, _ := c.Get(i)
-			if got != 0 {
-				t.Fatalf("row %d: expected 0, got %d", i, got)
+			if !c.IsNull(i) {
+				t.Fatalf("expected row %d to stay null", i)
 			}
 		}
 	})

@@ -99,6 +99,12 @@ func main() {
         os.Exit(1)
     }
 
+    p, stepNames, err := buildPipeline(cfg.Steps)
+    if err != nil {
+        fmt.Fprintln(os.Stderr, err)
+        os.Exit(2)
+    }
+
     // Observability: pprof + expvar servers
     if *pprofAddr != "" {
         go func() {
@@ -129,7 +135,6 @@ func main() {
     }
 
     var frame *j.Frame
-    var stepNames []string
 	useStream := *chunkSize > 0
 	if !useStream {
 		switch cfg.Input.Type {
@@ -185,12 +190,6 @@ func main() {
 
     // Dry-run: print inferred schema and steps, then exit
     if *dryRun {
-        // parse steps to stepNames (without building pipeline)
-        for _, raw := range cfg.Steps {
-            var probe map[string]json.RawMessage
-            _ = json.Unmarshal(raw, &probe)
-            for k := range probe { stepNames = append(stepNames, k) }
-        }
         switch cfg.Input.Type {
         case "", "csv":
             rdr, f, err := csvio.Open(cfg.Input.Path, csvio.ReaderOptions{HasHeader: cfg.Input.HasHeader, Delimiter: inputDelimiter, SampleRows: 50})
@@ -282,69 +281,6 @@ func main() {
         default:
             fmt.Fprintf(os.Stderr, "unsupported input type %q\n", cfg.Input.Type)
             os.Exit(2)
-        }
-    }
-
-    // Build pipeline from steps
-    p := j.NewPipeline()
-    for _, raw := range cfg.Steps {
-        var probe map[string]json.RawMessage
-        if err := json.Unmarshal(raw, &probe); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
-        for k, v := range probe {
-            switch k {
-            case "impute_constant":
-                var s struct{ Column string `json:"column"`; Value any `json:"value"` }
-                _ = json.Unmarshal(v, &s)
-                p.Add(&imp.Constant{Column: s.Column, Value: s.Value})
-                stepNames = append(stepNames, "impute_constant:"+s.Column)
-            case "impute_mean":
-                var s struct{ Column string `json:"column"` }
-                _ = json.Unmarshal(v, &s)
-                p.Add(&imp.Mean{Column: s.Column})
-                stepNames = append(stepNames, "impute_mean:"+s.Column)
-            case "trim":
-                var s struct{ Column string `json:"column"` }
-                _ = json.Unmarshal(v, &s)
-                p.Add(&std.Trim{Column: s.Column})
-                stepNames = append(stepNames, "trim:"+s.Column)
-            case "lower":
-                var s struct{ Column string `json:"column"` }
-                _ = json.Unmarshal(v, &s)
-                p.Add(&std.Lower{Column: s.Column})
-                stepNames = append(stepNames, "lower:"+s.Column)
-            case "regex_replace":
-                var s struct{ Column string `json:"column"`; Pattern string `json:"pattern"`; Replace string `json:"replace"` }
-                _ = json.Unmarshal(v, &s)
-                p.Add(&std.RegexReplace{Column: s.Column, Pattern: s.Pattern, Replace: s.Replace})
-                stepNames = append(stepNames, "regex_replace:"+s.Column)
-            case "map_values":
-                var s struct{ Column string `json:"column"`; Map map[string]string `json:"map"` }
-                _ = json.Unmarshal(v, &s)
-                p.Add(&std.MapValues{Column: s.Column, Map: s.Map})
-                stepNames = append(stepNames, "map_values:"+s.Column)
-            case "impute_median":
-                var s struct{ Column string `json:"column"` }
-                _ = json.Unmarshal(v, &s)
-                p.Add(&imp.Median{Column: s.Column})
-                stepNames = append(stepNames, "impute_median:"+s.Column)
-            case "validate_in":
-                var s struct{ Column string `json:"column"`; Values []string `json:"values"` }
-                _ = json.Unmarshal(v, &s)
-                p.Add(val.NewInSet(s.Column, s.Values))
-                stepNames = append(stepNames, "validate_in:"+s.Column)
-            case "validate_range":
-                var s struct{ Column string `json:"column"`; Min *float64 `json:"min"`; Max *float64 `json:"max"` }
-                _ = json.Unmarshal(v, &s)
-                p.Add(&val.Range{Column: s.Column, Min: s.Min, Max: s.Max})
-                stepNames = append(stepNames, "validate_range:"+s.Column)
-            case "cap_range":
-                var s struct{ Column string `json:"column"`; Min *float64 `json:"min"`; Max *float64 `json:"max"` }
-                _ = json.Unmarshal(v, &s)
-                p.Add(&outl.Cap{Column: s.Column, Min: s.Min, Max: s.Max})
-                stepNames = append(stepNames, "cap_range:"+s.Column)
-            default:
-                fmt.Fprintf(os.Stderr, "warning: unknown step %q ignored\n", k)
-            }
         }
     }
 
@@ -770,4 +706,66 @@ func expandOutPath(tmpl string, schema j.Schema, cols []string, f *j.Frame, key 
 
 func hasWildcards(path string) bool {
     return strings.ContainsAny(path, "*?[")
+}
+
+func buildPipeline(steps []json.RawMessage) (*j.Pipeline, []string, error) {
+    p := j.NewPipeline()
+    var names []string
+    for i, raw := range steps {
+        var probe map[string]json.RawMessage
+        if err := json.Unmarshal(raw, &probe); err != nil {
+            return nil, nil, fmt.Errorf("step %d: %w", i+1, err)
+        }
+        for k, v := range probe {
+            t, col, ok := newTransform(k, v)
+            if !ok {
+                return nil, nil, fmt.Errorf("unknown step %q at step %d", k, i+1)
+            }
+            p.Add(t)
+            names = append(names, k+":"+col)
+        }
+    }
+    return p, names, nil
+}
+
+func newTransform(key string, v json.RawMessage) (j.Transform, string, bool) {
+    var c struct{ Column string `json:"column"` }
+    _ = json.Unmarshal(v, &c)
+    switch key {
+    case "impute_constant":
+        var s struct{ Value any `json:"value"` }
+        _ = json.Unmarshal(v, &s)
+        return &imp.Constant{Column: c.Column, Value: s.Value}, c.Column, true
+    case "impute_mean":
+        return &imp.Mean{Column: c.Column}, c.Column, true
+    case "impute_median":
+        return &imp.Median{Column: c.Column}, c.Column, true
+    case "impute_mode":
+        return &imp.Mode{Column: c.Column}, c.Column, true
+    case "trim":
+        return &std.Trim{Column: c.Column}, c.Column, true
+    case "lower":
+        return &std.Lower{Column: c.Column}, c.Column, true
+    case "regex_replace":
+        var s struct{ Pattern string `json:"pattern"`; Replace string `json:"replace"` }
+        _ = json.Unmarshal(v, &s)
+        return &std.RegexReplace{Column: c.Column, Pattern: s.Pattern, Replace: s.Replace}, c.Column, true
+    case "map_values":
+        var s struct{ Map map[string]string `json:"map"` }
+        _ = json.Unmarshal(v, &s)
+        return &std.MapValues{Column: c.Column, Map: s.Map}, c.Column, true
+    case "validate_in":
+        var s struct{ Values []string `json:"values"` }
+        _ = json.Unmarshal(v, &s)
+        return val.NewInSet(c.Column, s.Values), c.Column, true
+    case "validate_range":
+        var s struct{ Min *float64 `json:"min"`; Max *float64 `json:"max"` }
+        _ = json.Unmarshal(v, &s)
+        return &val.Range{Column: c.Column, Min: s.Min, Max: s.Max}, c.Column, true
+    case "cap_range":
+        var s struct{ Min *float64 `json:"min"`; Max *float64 `json:"max"` }
+        _ = json.Unmarshal(v, &s)
+        return &outl.Cap{Column: c.Column, Min: s.Min, Max: s.Max}, c.Column, true
+    }
+    return nil, "", false
 }
