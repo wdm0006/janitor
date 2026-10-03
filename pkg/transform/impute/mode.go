@@ -30,6 +30,9 @@ func (t *Mode) Apply(ctx context.Context, f *j.Frame) (*j.Frame, error) {
 				best = v
 			}
 		}
+		if bestc == 0 {
+			return f, nil
+		}
 		for i := 0; i < c.Len(); i++ {
 			if c.IsNull(i) {
 				c.Set(i, best)
@@ -49,6 +52,9 @@ func (t *Mode) Apply(ctx context.Context, f *j.Frame) (*j.Frame, error) {
 				bestc = counts[v]
 				best = v
 			}
+		}
+		if bestc == 0 {
+			return f, nil
 		}
 		for i := 0; i < c.Len(); i++ {
 			if c.IsNull(i) {
