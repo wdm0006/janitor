@@ -12,6 +12,7 @@ import (
     "path/filepath"
     "runtime/pprof"
     "strings"
+    "sync/atomic"
     "time"
     "unicode/utf8"
 
@@ -466,20 +467,69 @@ func normalizeConfig(b []byte, unmarshal func([]byte, any) error, cfg *Config) e
 }
 
 // runStreamWithProgress processes chunks and prints periodic progress when verbose.
+// progressReporter formats one progress line per tick from a single row-count snapshot.
+type progressReporter struct {
+    w        io.Writer
+    start    time.Time
+    expected int
+    logJSON  bool
+    rates    []float64
+}
+
+func (pr *progressReporter) report(rows int) {
+    elapsed := time.Since(pr.start).Seconds()
+    instRate := float64(rows) / (elapsed + 1e-9)
+    pr.rates = append(pr.rates, instRate)
+    if len(pr.rates) > 5 { pr.rates = pr.rates[len(pr.rates)-5:] }
+    var sum float64
+    for _, r := range pr.rates { sum += r }
+    rate := sum / float64(len(pr.rates))
+    expected := pr.expected
+    if expected > 0 {
+        remaining := expected - rows
+        if remaining < 0 { remaining = 0 }
+        eta := time.Duration(float64(remaining)/(rate+1e-9)) * time.Second
+        pct := float64(rows) / float64(expected)
+        if pct > 1 { pct = 1 }
+        width := 30
+        filled := int(pct * float64(width))
+        if pr.logJSON {
+            evt := map[string]any{"type": "progress", "rows": rows, "expected": expected, "rate_rps": rate, "eta": int(eta.Truncate(time.Second).Seconds())}
+            b, _ := json.Marshal(evt)
+            fmt.Fprintln(pr.w, string(b))
+        } else {
+            bar := strings.Repeat("=", filled) + strings.Repeat(" ", width-filled)
+            fmt.Fprintf(pr.w, "[%s] %5.1f%% rows=%d/%d (%.1f r/s) ETA=%s\n", bar, pct*100, rows, expected, rate, eta.Truncate(time.Second))
+        }
+    } else {
+        if pr.logJSON {
+            evt := map[string]any{"type": "progress", "rows": rows, "rate_rps": rate}
+            b, _ := json.Marshal(evt)
+            fmt.Fprintln(pr.w, string(b))
+        } else {
+            fmt.Fprintf(pr.w, "processed rows=%d (%.1f rows/s) ...\n", rows, rate)
+        }
+    }
+}
+
+// runStreamWithProgress processes chunks and prints periodic progress when verbose.
 func runStreamWithProgress(ctx context.Context, p *j.Pipeline, src j.ChunkSource, sink j.ChunkSink, verbose bool, expected int, logJSON bool) error {
     if !verbose { return j.RunStream(ctx, p, src, sink) }
     ticker := time.NewTicker(1 * time.Second)
     defer ticker.Stop()
+    return streamWithProgress(ctx, p, src, sink, expected, logJSON, ticker.C, os.Stderr)
+}
+
+func streamWithProgress(ctx context.Context, p *j.Pipeline, src j.ChunkSource, sink j.ChunkSink, expected int, logJSON bool, tick <-chan time.Time, w io.Writer) error {
     done := make(chan error, 1)
-    var rows int
-    start := time.Now()
-    var rates []float64
+    var rows atomic.Int64
+    pr := &progressReporter{w: w, start: time.Now(), expected: expected, logJSON: logJSON}
     go func() {
         for {
             f, err := src.Next()
             if err == io.EOF { done <- nil; return }
             if err != nil { done <- err; return }
-            rows += f.Rows()
+            rows.Add(int64(f.Rows()))
             out, err := p.Run(ctx, f)
             if err != nil { done <- err; return }
             if err := sink.Write(out); err != nil { done <- err; return }
@@ -489,39 +539,8 @@ func runStreamWithProgress(ctx context.Context, p *j.Pipeline, src j.ChunkSource
         select {
         case err := <-done:
             return err
-        case <-ticker.C:
-            elapsed := time.Since(start).Seconds()
-            instRate := float64(rows) / (elapsed + 1e-9)
-            rates = append(rates, instRate)
-            if len(rates) > 5 { rates = rates[len(rates)-5:] }
-            var sum float64
-            for _, r := range rates { sum += r }
-            rate := sum / float64(len(rates))
-            if expected > 0 {
-                remaining := expected - rows
-                if remaining < 0 { remaining = 0 }
-                eta := time.Duration(float64(remaining)/(rate+1e-9)) * time.Second
-                pct := float64(rows) / float64(expected)
-                if pct > 1 { pct = 1 }
-                width := 30
-                filled := int(pct * float64(width))
-                if logJSON {
-                    evt := map[string]any{"type": "progress", "rows": rows, "expected": expected, "rate_rps": rate, "eta": int(eta.Truncate(time.Second).Seconds())}
-                    b, _ := json.Marshal(evt)
-                    fmt.Fprintln(os.Stderr, string(b))
-                } else {
-                    bar := strings.Repeat("=", filled) + strings.Repeat(" ", width-filled)
-                    fmt.Fprintf(os.Stderr, "[%s] %5.1f%% rows=%d/%d (%.1f r/s) ETA=%s\n", bar, pct*100, rows, expected, rate, eta.Truncate(time.Second))
-                }
-            } else {
-                if logJSON {
-                    evt := map[string]any{"type": "progress", "rows": rows, "rate_rps": rate}
-                    b, _ := json.Marshal(evt)
-                    fmt.Fprintln(os.Stderr, string(b))
-                } else {
-                    fmt.Fprintf(os.Stderr, "processed rows=%d (%.1f rows/s) ...\n", rows, rate)
-                }
-            }
+        case <-tick:
+            pr.report(int(rows.Load()))
         }
     }
 }
@@ -530,17 +549,20 @@ func runStreamWithProgress(ctx context.Context, p *j.Pipeline, src j.ChunkSource
 // and writes each partition to a sink keyed by the expanded outPath template. outPath must
 // include placeholders like {col:Name} which will be replaced with the row's column value.
 func runStreamPartitioned(ctx context.Context, p *j.Pipeline, src j.ChunkSource, outPath string, makeSink func(path string, schema j.Schema) (j.ChunkSink, error), schema j.Schema, partCols []string, verbose bool, expected int, logJSON bool) error {
+    ticker := time.NewTicker(1 * time.Second)
+    defer ticker.Stop()
+    return streamPartitioned(ctx, p, src, outPath, makeSink, schema, partCols, verbose, expected, logJSON, ticker.C, os.Stderr)
+}
+
+func streamPartitioned(ctx context.Context, p *j.Pipeline, src j.ChunkSource, outPath string, makeSink func(path string, schema j.Schema) (j.ChunkSink, error), schema j.Schema, partCols []string, verbose bool, expected int, logJSON bool, tick <-chan time.Time, w io.Writer) error {
     sinks := map[string]j.ChunkSink{}
     closeAll := func() {
         for _, s := range sinks { _ = s.Close() }
     }
     defer closeAll()
-    ticker := time.NewTicker(1 * time.Second)
-    defer ticker.Stop()
     done := make(chan error, 1)
-    var rows int
-    start := time.Now()
-    var rates []float64
+    var rows atomic.Int64
+    pr := &progressReporter{w: w, start: time.Now(), expected: expected, logJSON: logJSON}
     go func() {
         for {
             f, err := src.Next()
@@ -560,7 +582,7 @@ func runStreamPartitioned(ctx context.Context, p *j.Pipeline, src j.ChunkSource,
                     s = ss
                 }
                 if err := s.Write(pf); err != nil { done <- err; return }
-                rows += pf.Rows()
+                rows.Add(int64(pf.Rows()))
             }
         }
     }()
@@ -571,39 +593,8 @@ func runStreamPartitioned(ctx context.Context, p *j.Pipeline, src j.ChunkSource,
         select {
         case err := <-done:
             return err
-        case <-ticker.C:
-            elapsed := time.Since(start).Seconds()
-            instRate := float64(rows) / (elapsed + 1e-9)
-            rates = append(rates, instRate)
-            if len(rates) > 5 { rates = rates[len(rates)-5:] }
-            var sum float64
-            for _, r := range rates { sum += r }
-            rate := sum / float64(len(rates))
-            if expected > 0 {
-                remaining := expected - rows
-                if remaining < 0 { remaining = 0 }
-                eta := time.Duration(float64(remaining)/(rate+1e-9)) * time.Second
-                pct := float64(rows) / float64(expected)
-                if pct > 1 { pct = 1 }
-                width := 30
-                filled := int(pct * float64(width))
-                if logJSON {
-                    evt := map[string]any{"type": "progress", "rows": rows, "expected": expected, "rate_rps": rate, "eta": int(eta.Truncate(time.Second).Seconds())}
-                    b, _ := json.Marshal(evt)
-                    fmt.Fprintln(os.Stderr, string(b))
-                } else {
-                    bar := strings.Repeat("=", filled) + strings.Repeat(" ", width-filled)
-                    fmt.Fprintf(os.Stderr, "[%s] %5.1f%% rows=%d/%d (%.1f r/s) ETA=%s\n", bar, pct*100, rows, expected, rate, eta.Truncate(time.Second))
-                }
-            } else {
-                if logJSON {
-                    evt := map[string]any{"type": "progress", "rows": rows, "rate_rps": rate}
-                    b, _ := json.Marshal(evt)
-                    fmt.Fprintln(os.Stderr, string(b))
-                } else {
-                    fmt.Fprintf(os.Stderr, "processed rows=%d (%.1f rows/s) ...\n", rows, rate)
-                }
-            }
+        case <-tick:
+            pr.report(int(rows.Load()))
         }
     }
 }
