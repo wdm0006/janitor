@@ -8,7 +8,6 @@ import (
     "io"
     "log"
     "net/http"
-    _ "net/http/pprof"
     "os"
     "path/filepath"
     "runtime/pprof"
@@ -62,7 +61,7 @@ func main() {
     cpuProfile := flag.String("cpu-profile", "", "Write CPU profile to file (pprof)")
     memProfile := flag.String("mem-profile", "", "Write heap profile to file on exit (pprof)")
     pprofAddr := flag.String("pprof-addr", "", "Serve net/http/pprof on this address (e.g., :6060)")
-    metricsAddr := flag.String("metrics-addr", "", "Serve expvar metrics and /healthz on this address (e.g., :9090)")
+    metricsAddr := flag.String("metrics-addr", "", "Serve /healthz on this address (e.g., :9090)")
     logJSON := flag.Bool("log-json", false, "Emit progress logs as JSON lines")
     dryRun := flag.Bool("dry-run", false, "Infer schema and print planned steps, without reading/writing data")
     flag.Parse()
@@ -109,14 +108,13 @@ func main() {
     if *pprofAddr != "" {
         go func() {
             log.Printf("pprof listening on %s", *pprofAddr)
-            _ = http.ListenAndServe(*pprofAddr, nil)
+            _ = http.ListenAndServe(*pprofAddr, newPprofMux())
         }()
     }
     if *metricsAddr != "" {
         go func() {
-            http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
             log.Printf("metrics listening on %s", *metricsAddr)
-            _ = http.ListenAndServe(*metricsAddr, nil)
+            _ = http.ListenAndServe(*metricsAddr, newMetricsMux())
         }()
     }
     if *cpuProfile != "" {
