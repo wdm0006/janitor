@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -213,4 +214,35 @@ func TestCLIUnknownStepExits2(t *testing.T) {
 func jsonString(value string) string {
 	b, _ := json.Marshal(value)
 	return string(b)
+}
+
+func TestCLIJSONLBatchKeepsAllRows(t *testing.T) {
+	binary := buildCLI(t)
+	tmp := t.TempDir()
+	input := filepath.Join(tmp, "in.jsonl")
+	var in strings.Builder
+	var want strings.Builder
+	for i := 1; i <= 101; i++ {
+		in.WriteString(`{"id":` + strconv.Itoa(i) + "}\n")
+		want.WriteString(`{"id":` + strconv.Itoa(i) + "}\n")
+	}
+	if err := os.WriteFile(input, []byte(in.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(tmp, "out.jsonl")
+	config := `{"input":{"path":` + jsonString(input) + `,"type":"jsonl"},"output":{"path":` + jsonString(output) + `,"type":"jsonl"},"steps":[]}`
+	configPath := filepath.Join(tmp, "rules.json")
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if combined, err := exec.Command(binary, "--config", configPath).CombinedOutput(); err != nil {
+		t.Fatalf("run CLI: %v\n%s", err, combined)
+	}
+	got, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want.String() {
+		t.Fatalf("output differs: got %d bytes, want %d; tail %q", len(got), want.Len(), got[max(0, len(got)-30):])
+	}
 }

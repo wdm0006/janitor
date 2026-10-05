@@ -19,6 +19,7 @@ type ReaderOptions struct {
 
 type Reader struct {
 	r    *bufio.Reader
+	dec  *json.Decoder
 	opt  ReaderOptions
 	buf  []map[string]any
 	keys []string
@@ -37,12 +38,19 @@ func Open(path string, opt ReaderOptions) (*Reader, *os.File, error) {
     return &Reader{r: rd, opt: opt}, f, nil
 }
 
+func (r *Reader) decoder() *json.Decoder {
+	if r.dec == nil {
+		r.dec = json.NewDecoder(r.r)
+	}
+	return r.dec
+}
+
 func (r *Reader) InferSchema() (j.Schema, error) {
 	max := r.opt.SampleRows
 	if max <= 0 {
 		max = 100
 	}
-	dec := json.NewDecoder(r.r)
+	dec := r.decoder()
 	var sample []map[string]any
 	keysSet := map[string]struct{}{}
 	for len(sample) < max {
@@ -82,7 +90,7 @@ func (r *Reader) ReadAll(schema j.Schema) (*j.Frame, error) {
 		r.setRowFromMap(f, row, m)
 	}
 	// continue decoding
-	dec := json.NewDecoder(r.r)
+	dec := r.decoder()
 	for {
 		var m map[string]any
 		if err := dec.Decode(&m); err != nil {
