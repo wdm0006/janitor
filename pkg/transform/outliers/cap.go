@@ -2,6 +2,7 @@ package outliers
 
 import (
 	"context"
+	"math"
 	j "github.com/wdm0006/janitor/pkg/janitor"
 )
 
@@ -40,10 +41,10 @@ func (t *Cap) Apply(ctx context.Context, f *j.Frame) (*j.Frame, error) {
 			}
 			v, _ := c.Get(i)
 			if t.Min != nil && float64(v) < *t.Min {
-				v = int64(*t.Min)
+				v = int64(math.Ceil(*t.Min))
 			}
 			if t.Max != nil && float64(v) > *t.Max {
-				v = int64(*t.Max)
+				v = int64(math.Floor(*t.Max))
 			}
 			c.Set(i, v)
 		}
